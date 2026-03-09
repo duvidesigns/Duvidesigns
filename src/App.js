@@ -216,7 +216,7 @@ export default function App() {
         load("io-users"),load("io-mats"),load("io-sups"),load("io-txns"),
         load("io-perms"),load("io-pos"),load("io-runs"),load("io-audit"),
       ]);
-      setUsers(u??SEED_USERS);   setMats(m??SEED_MATERIALS); setSups(s??SEED_SUPPLIERS);
+      setUsers(u??SEED_USERS);   setMats(m??[]); setSups(s??SEED_SUPPLIERS);
       setTxns(t??SEED_TXN);     setPerms(p??DEFAULT_PERMS); setPOs(po??SEED_POs);
       setRuns(r??SEED_RUNS);    setAudit(a??SEED_AUDIT);
       if(!u) save("io-users",SEED_USERS); if(!m) save("io-mats",SEED_MATERIALS);
@@ -587,15 +587,7 @@ export default function App() {
           {loginF.error&&<div style={{background:"#fef2f2",borderRadius:7,padding:"8px 12px",color:"#991b1b",fontSize:12,fontWeight:600}}>❌ {loginF.error}</div>}
           <button style={{...btn("#38bdf8","#0f172a","11px"),width:"100%",fontSize:14}} onClick={handleLogin}>Sign In →</button>
         </div>
-        <div style={{marginTop:22,borderTop:"1px solid #334155",paddingTop:18}}>
-          <div style={{color:"#475569",fontSize:11,marginBottom:8,fontWeight:700}}>Demo Credentials</div>
-          {[["admin","admin123","Admin"],["manager1","manager123","Manager"],["warehouse1","wh123","Warehouse"],["viewer1","view123","Viewer"]].map(([u,p,r])=>(
-            <div key={u} onClick={()=>setLoginF({username:u,password:p,error:""})} style={{display:"flex",alignItems:"center",gap:10,padding:"6px 10px",borderRadius:7,cursor:"pointer",marginBottom:4,background:"#0f172a",border:"1px solid #1e293b"}}>
-              <RoleBadge role={r}/>
-              <span style={{color:"#64748b",fontSize:11}}>{u} / {p}</span>
-            </div>
-          ))}
-        </div>
+
       </div>
     </div>
   );
