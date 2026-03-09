@@ -1,7 +1,22 @@
 // @ts-nocheck
-/* eslint-disable no-restricted-globals */
+/* eslint-disable */
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
+import { initializeApp } from "firebase/app";
+import { getDatabase, ref, set, get } from "firebase/database";
+
+// ─── Firebase Config ──────────────────────────────────────────────────────────
+const firebaseConfig = {
+  apiKey: "AIzaSyAlvZ8nzjTdFpBw7mFxbMjpiHlTqrHfP6o",
+  authDomain: "duvi-designs.firebaseapp.com",
+  databaseURL: "https://duvi-designs-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "duvi-designs",
+  storageBucket: "duvi-designs.firebasestorage.app",
+  messagingSenderId: "290198968741",
+  appId: "1:290198968741:web:222a0b01d04f9ae77cf04c"
+};
+const firebaseApp = initializeApp(firebaseConfig);
+const db = getDatabase(firebaseApp);
 
 // ─── Role Config ──────────────────────────────────────────────────────────────
 const ROLE_COLORS = { Admin:"#8b5cf6", Manager:"#3b82f6", Warehouse:"#f59e0b", Viewer:"#94a3b8" };
@@ -191,8 +206,8 @@ export default function App() {
   const restoreRef = useRef();
 
   // ── Storage ─────────────────────────────────────────────────────────────────
-  const save = useCallback(async (key,val) => { try { await window.storage.set(key,JSON.stringify(val),true); } catch(e){} },[]);
-  const load = useCallback(async (key) => { try { const r=await window.storage.get(key,true); return r?JSON.parse(r.value):null; } catch(e){return null;} },[]);
+  const save = useCallback(async (key, val) => { try { await set(ref(db, "duvidesigns/" + key), JSON.stringify(val)); } catch(e){} }, []);
+  const load = useCallback(async (key) => { try { const snap = await get(ref(db, "duvidesigns/" + key)); return snap.exists() ? JSON.parse(snap.val()) : null; } catch(e){ return null; } }, []);
 
   // ── Boot ───────────────────────────────────────────────────────────────────
   useEffect(() => {
