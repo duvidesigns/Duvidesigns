@@ -107,17 +107,17 @@ const fmtC  = (n) => "₹"+(n??0).toLocaleString("en-IN",{minimumFractionDigits:
 const uid   = () => Math.random().toString(36).slice(2,9).toUpperCase();
 const now   = () => new Date().toISOString();
 const today = () => new Date().toISOString().slice(0,10);
-const fmtTs = (ts: string) => { const d=new Date(ts); return d.toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"})+" "+d.toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"}); };
+const fmtTs = (ts) => { const d=new Date(ts); return d.toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"})+" "+d.toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"}); };
 
-function stockStatus(stock: number, thresh: number) {
+function stockStatus(stock, thresh) {
   if (stock<=0)      return { label:"Out of Stock", color:"#ef4444", bg:"#fef2f2" };
   if (stock<=thresh) return { label:"Low Stock",    color:"#f59e0b", bg:"#fffbeb" };
   return                    { label:"OK",           color:"#10b981", bg:"#f0fdf4" };
 }
 
-function getMonthlyData(transactions: any[], materials: any[]) {
+function getMonthlyData(transactions, materials) {
   const map = {};
-  transactions.forEach((tx: any) => {
+  transactions.forEach((tx) => {
     const m  = tx.date.slice(0,7);
     const mat= materials.find(x=>x.id===tx.materialId);
     const cost=(mat?.unitCost||0)*tx.qty;
@@ -198,9 +198,9 @@ function Sparkline({ data, color="#38bdf8", width=80, height=32 }) {
   URL.revokeObjectURL(url);
 }
 
-function toCSV(rows: any[], cols: {label: string, key: string}[]) {
+function toCSV(rows, cols) {
   const header = cols.map(c=>c.label).join(",");
-  const body   = rows.map((r: any)=>cols.map(c=>{ const v=r[c.key]??""; return typeof v==="string"&&v.includes(",") ? `"${v}"` : v; }).join(",")).join("\n");
+  const body   = rows.map((r)=>cols.map(c=>{ const v=r[c.key]??""; return typeof v==="string"&&v.includes(",") ? `"${v}"` : v; }).join(",")).join("\n");
   return header+"\n"+body;
 }
 
