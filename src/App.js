@@ -196,7 +196,6 @@ function Sparkline({ data, color="#38bdf8", width=80, height=32 }) {
   const a    = document.createElement("a");
   a.href=url; a.download=filename; a.click();
   URL.revokeObjectURL(url);
-}
 
 function toCSV(rows, cols) {
   const header = cols.map(c=>c.label).join(",");
