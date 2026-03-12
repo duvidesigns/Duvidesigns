@@ -1,7 +1,7 @@
 // @ts-nocheck
 /* eslint-disable */
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
-import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
+import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, AreaChart, Area } from "recharts";
 import { initializeApp } from "firebase/app";
 import { getDatabase, ref, set, get } from "firebase/database";
 
@@ -132,7 +132,65 @@ function getMonthlyData(transactions: any[], materials: any[]) {
   }));
 }
 
-function downloadFile(content: string, filename: string, type="text/csv") {
+// ─── Forecasting ──────────────────────────────────────────────────────────────
+function getForecast(mat, txns, suppliers) {
+  const thirtyDaysAgo = new Date(); thirtyDaysAgo.setDate(thirtyDaysAgo.getDate()-30);
+  const recentOuts = txns.filter(t=>t.materialId===mat.id && t.type==="OUT" && new Date(t.date)>=thirtyDaysAgo);
+  const totalOut = recentOuts.reduce((s,t)=>s+t.qty, 0);
+  const avgDailyUsage = totalOut / 30;
+  const daysLeft = avgDailyUsage > 0 ? Math.floor(mat.stock / avgDailyUsage) : null;
+  const sup = suppliers.find(s=>s.name===mat.supplier);
+  const leadTime = sup?.lead || 7;
+  const reorderDate = daysLeft !== null ? new Date(Date.now() + Math.max(0, daysLeft - leadTime) * 86400000).toISOString().slice(0,10) : null;
+  const reorderQty = avgDailyUsage > 0 ? Math.ceil(avgDailyUsage * (leadTime + 14)) : null;
+  const urgency = daysLeft === null ? "no-data" : daysLeft <= 7 ? "critical" : daysLeft <= 14 ? "warning" : daysLeft <= 30 ? "watch" : "ok";
+  return { avgDailyUsage: +avgDailyUsage.toFixed(2), daysLeft, reorderDate, reorderQty, leadTime, urgency };
+}
+
+function get30DayValueTrend(txns, mats) {
+  const map = {};
+  for (let i=29; i>=0; i--) {
+    const d = new Date(); d.setDate(d.getDate()-i);
+    const key = d.toISOString().slice(0,10);
+    map[key] = { date: key, label: d.toLocaleDateString("en-IN",{month:"short",day:"numeric"}), value: 0 };
+  }
+  txns.forEach(tx => {
+    const mat = mats.find(m=>m.id===tx.materialId);
+    if (!mat || !map[tx.date]) return;
+    const val = mat.unitCost * tx.qty;
+    if (tx.type==="IN") map[tx.date].value += val;
+    else map[tx.date].value -= val;
+  });
+  let running = mats.reduce((s,m)=>s+m.stock*m.unitCost, 0);
+  const days = Object.values(map).reverse();
+  days.forEach(d => { running += d.value; d.stockValue = +running.toFixed(2); });
+  return days.reverse().map(d=>({ label: d.label, stockValue: d.stockValue }));
+}
+
+function getCategoryBreakdown(mats) {
+  const map = {};
+  mats.forEach(m => {
+    if (!map[m.category]) map[m.category] = 0;
+    map[m.category] += m.stock * m.unitCost;
+  });
+  return Object.entries(map).map(([name,value])=>({ name, value: +value.toFixed(2) })).sort((a,b)=>b.value-a.value);
+}
+
+// ─── Sparkline ────────────────────────────────────────────────────────────────
+function Sparkline({ data, color="#38bdf8", width=80, height=32 }) {
+  if (!data || data.length < 2) return null;
+  const vals = data.map(d=>d.v);
+  const min = Math.min(...vals); const max = Math.max(...vals);
+  const range = max - min || 1;
+  const pts = vals.map((v,i) => {
+    const x = (i/(vals.length-1)) * width;
+    const y = height - ((v-min)/range) * (height-4) - 2;
+    return `${x},${y}`;
+  }).join(" ");
+  return <svg width={width} height={height} style={{overflow:"visible"}}>
+    <polyline points={pts} fill="none" stroke={color} strokeWidth={1.5} strokeLinejoin="round" strokeLinecap="round"/>
+  </svg>;
+}
   const blob = new Blob([content], { type });
   const url  = URL.createObjectURL(blob);
   const a    = document.createElement("a");
@@ -191,13 +249,15 @@ export default function App() {
   const [perms,    setPerms]    = useState({});
   const [notifs,   setNotifs]   = useState([]);
   const [loading,  setLoading]  = useState(true);
-  const [session,  setSession]  = useState(null);
+  const [session,  setSession]  = useState(()=>{ try { const s=localStorage.getItem("io-session"); return s?JSON.parse(s):null; } catch(e){return null;} });
   const [tab,      setTab]      = useState("Dashboard");
   const [modal,    setModal]    = useState(null);
   const [form,     setForm]     = useState({});
   const [target,   setTarget]   = useState(null);
   const [toast,    setToast]    = useState(null);
   const [search,   setSearch]   = useState("");
+  const [showTour, setShowTour] = useState(false);
+  const [tourStep, setTourStep] = useState(0);
   const [syncing,  setSyncing]  = useState(false);
   const [loginF,   setLoginF]   = useState({ username:"", password:"", error:"" });
   const [showNotif,setShowNotif]= useState(false);
@@ -242,6 +302,29 @@ export default function App() {
     return ()=>clearInterval(iv);
   },[session]);
 
+  // ── Stock Alert Push Notifications ─────────────────────────────────────────
+  useEffect(() => {
+    if (!session) return;
+    const role = session?.user?.role;
+    if (role !== "Admin" && role !== "Manager") return;
+    if (!("Notification" in window) || Notification.permission !== "granted") return;
+    const criticalMats = mats.filter(m => m.stock <= m.threshold);
+    const notifKey = `io-notif-sent-${today()}`;
+    try {
+      const sent = JSON.parse(localStorage.getItem(notifKey)||"[]");
+      criticalMats.forEach(m => {
+        if (!sent.includes(m.id)) {
+          new Notification("⚠ InventoryOS Stock Alert", {
+            body: `${m.name} is running low — only ${m.stock} ${m.unit} left (threshold: ${m.threshold})`,
+            icon: "/logo192.png"
+          });
+          sent.push(m.id);
+        }
+      });
+      localStorage.setItem(notifKey, JSON.stringify(sent));
+    } catch(e) {}
+  }, [mats, session]);
+
   // ── Helpers ─────────────────────────────────────────────────────────────────
   const syncAll = async (updates) => {
     setSyncing(true);
@@ -275,7 +358,16 @@ export default function App() {
     const u = users.find(x=>x.username===loginF.username&&x.password===loginF.password);
     if (!u) { setLoginF(f=>({...f,error:"Incorrect username or password."})); return; }
     const p = perms[u.role]??DEFAULT_PERMS[u.role];
-    setSession({ user:u, perms:p });
+    const sess = { user:u, perms:p };
+    setSession(sess);
+    try { localStorage.setItem("io-session", JSON.stringify(sess)); } catch(e){}
+    // Request push notification permission for Admin and Manager
+    if ((u.role==="Admin"||u.role==="Manager") && "Notification" in window && Notification.permission==="default") {
+      Notification.requestPermission();
+    }
+    // Show onboarding tour on first login
+    const tourKey = `io-tour-${u.id}`;
+    try { if (!localStorage.getItem(tourKey)) { setShowTour(true); setTourStep(0); } } catch(e){}
     setTab("Dashboard");
     const entry = addAuditEntry("LOGIN","Auth",u.id,`${u.name} logged in`, u);
     const newA=[entry,...audit].slice(0,500);
@@ -543,6 +635,12 @@ export default function App() {
   const stockVal   = mats.reduce((s,m)=>s+m.stock*m.unitCost,0);
   const totalCostIn  = txns.filter(t=>t.type==="IN").reduce((s,t)=>{ const m=mats.find(x=>x.id===t.materialId); return s+(m?m.unitCost*t.qty:0); },0);
   const totalCostOut = txns.filter(t=>t.type==="OUT").reduce((s,t)=>{ const m=mats.find(x=>x.id===t.materialId); return s+(m?m.unitCost*t.qty:0); },0);
+  const todayCostIn  = txns.filter(t=>t.type==="IN"&&t.date===today()).reduce((s,t)=>{ const m=mats.find(x=>x.id===t.materialId); return s+(m?m.unitCost*t.qty:0); },0);
+  const todayCostOut = txns.filter(t=>t.type==="OUT"&&t.date===today()).reduce((s,t)=>{ const m=mats.find(x=>x.id===t.materialId); return s+(m?m.unitCost*t.qty:0); },0);
+  const forecasts    = useMemo(()=>mats.map(m=>({...m, forecast:getForecast(m,txns,sups)})),[mats,txns,sups]);
+  const categoryData = useMemo(()=>getCategoryBreakdown(mats),[mats]);
+  const trendData    = useMemo(()=>get30DayValueTrend(txns,mats),[txns,mats]);
+  const top5Mats     = useMemo(()=>[...mats].sort((a,b)=>b.stock*b.unitCost-a.stock*a.unitCost).slice(0,5),[mats]);
   const visibleTxn = useMemo(()=>{
     const sorted=[...txns].sort((a,b)=>b.date.localeCompare(a.date));
     return data("viewAllTxn")?sorted:sorted.filter(t=>t.userId===session?.user?.id);
@@ -558,6 +656,7 @@ export default function App() {
     {key:"Production Runs",label:"🏭 Production Runs",perm:"productionRuns"},
     {key:"Suppliers",label:"🏢 Suppliers",perm:"suppliers"},
     {key:"Cost & Analytics",label:"💰 Cost & Analytics",perm:"costs"},
+    {key:"Forecasting",label:"🔮 Forecasting",perm:"costs"},
     {key:"Audit Log",label:"🔍 Audit Log",perm:"auditLog"},
     {key:"Admin",label:"⚙ Admin",perm:"admin"},
   ];
@@ -594,10 +693,72 @@ export default function App() {
 
   const user=session.user;
 
+  // ── Tour slides per role ────────────────────────────────────────────────────
+  const TOUR_SLIDES_BASE = [
+    { icon:"⚙️", title:`Welcome, ${user.name}!`, desc:"InventoryOS helps you manage your manufacturing raw materials in real time. This quick tour will show you how everything works." },
+    { icon:"📊", title:"Dashboard", desc:"Your home screen. See a live overview of stock levels, total inventory value, alerts for low stock, and recent activity at a glance." },
+    { icon:"📦", title:"Inventory", desc:"View all your raw materials, their stock levels, thresholds, and costs. Add, edit, or delete materials and do stock in/out from here." },
+  ];
+  const TOUR_SLIDES_WAREHOUSE = [
+    { icon:"📋", title:"Transactions", desc:"Every stock movement is recorded here — stock in, stock out, purchase order receipts, and production run consumptions." },
+    { icon:"🏭", title:"Production Runs", desc:"Log production runs that consume multiple materials at once. The app automatically deducts stock from inventory." },
+  ];
+  const TOUR_SLIDES_MANAGER = [
+    { icon:"🧾", title:"Purchase Orders", desc:"Create POs to restock materials, assign them to suppliers, and mark them as received when goods arrive." },
+    { icon:"💰", title:"Cost & Analytics", desc:"Track your total inventory value, cost trends over time, and category-wise cost breakdown. Includes 30-day trend charts." },
+    { icon:"🔮", title:"Forecasting", desc:"AI-powered demand forecasting predicts how many days each material will last, when to reorder, and how much to order." },
+  ];
+  const TOUR_SLIDES_ADMIN = [
+    { icon:"⚙", title:"Admin Panel", desc:"Manage users, roles, and permissions. Create new accounts, assign roles, and control what each user can see and do." },
+  ];
+  const TOUR_SLIDES_END = [
+    { icon:"🔔", title:"Alerts & Notifications", desc:"You'll get browser notifications when stock drops below threshold. The bell icon in the header shows all alerts." },
+    { icon:"✅", title:"You're all set!", desc:"That's everything! You can replay this tour anytime by clicking the ❓ button in the header. Good luck!" },
+  ];
+  const getTourSlides = (role) => {
+    if (role==="Admin") return [...TOUR_SLIDES_BASE, ...TOUR_SLIDES_WAREHOUSE, ...TOUR_SLIDES_MANAGER, ...TOUR_SLIDES_ADMIN, ...TOUR_SLIDES_END];
+    if (role==="Manager") return [...TOUR_SLIDES_BASE, ...TOUR_SLIDES_MANAGER, ...TOUR_SLIDES_END];
+    if (role==="Warehouse") return [...TOUR_SLIDES_BASE, ...TOUR_SLIDES_WAREHOUSE, ...TOUR_SLIDES_END];
+    return [...TOUR_SLIDES_BASE, ...TOUR_SLIDES_END];
+  };
+  const tourSlides = getTourSlides(user.role);
+  const closeTour = () => {
+    setShowTour(false);
+    try { localStorage.setItem(`io-tour-${user.id}`, "done"); } catch(e){}
+  };
+
   // ════════════════════════════════════════════════════════════════════════════
   // MAIN APP
   return (
     <div style={{fontFamily:"'DM Sans','Segoe UI',sans-serif",background:"#f1f5f9",minHeight:"100vh"}}>
+
+      {/* Onboarding Tour Modal */}
+      {showTour&&tourSlides[tourStep]&&(
+        <div style={{position:"fixed",inset:0,zIndex:10000,background:"rgba(0,0,0,0.7)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+          <div style={{background:"#fff",borderRadius:20,width:"100%",maxWidth:460,padding:"36px 36px 28px",boxShadow:"0 30px 80px rgba(0,0,0,0.4)",position:"relative"}}>
+            {/* Progress bar */}
+            <div style={{position:"absolute",top:0,left:0,right:0,height:4,background:"#f1f5f9",borderRadius:"20px 20px 0 0",overflow:"hidden"}}>
+              <div style={{height:"100%",background:"linear-gradient(90deg,#38bdf8,#6366f1)",width:`${((tourStep+1)/tourSlides.length)*100}%`,transition:"width 0.4s"}}/>
+            </div>
+            <div style={{textAlign:"center",padding:"10px 0 20px"}}>
+              <div style={{fontSize:52,marginBottom:14}}>{tourSlides[tourStep].icon}</div>
+              <div style={{fontSize:20,fontWeight:900,color:"#0f172a",marginBottom:10}}>{tourSlides[tourStep].title}</div>
+              <div style={{fontSize:14,color:"#475569",lineHeight:1.7}}>{tourSlides[tourStep].desc}</div>
+            </div>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginTop:8}}>
+              <div style={{fontSize:12,color:"#94a3b8"}}>{tourStep+1} of {tourSlides.length}</div>
+              <div style={{display:"flex",gap:8}}>
+                <button style={{...btn("#f1f5f9","#64748b","8px 16px"),fontSize:13}} onClick={closeTour}>Skip</button>
+                {tourStep>0&&<button style={{...btn("#e0f2fe","#0369a1","8px 16px"),fontSize:13}} onClick={()=>setTourStep(s=>s-1)}>← Back</button>}
+                {tourStep<tourSlides.length-1
+                  ? <button style={{...btn("#6366f1","#fff","8px 20px"),fontSize:13}} onClick={()=>setTourStep(s=>s+1)}>Next →</button>
+                  : <button style={{...btn("#10b981","#fff","8px 20px"),fontSize:13}} onClick={closeTour}>Get Started ✓</button>
+                }
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Toast */}
       {toast&&<div style={{position:"fixed",bottom:24,right:24,zIndex:9999,background:toast.type==="err"?"#ef4444":"#10b981",color:"#fff",borderRadius:10,padding:"12px 20px",fontWeight:700,fontSize:13,boxShadow:"0 8px 24px rgba(0,0,0,0.25)"}}>
@@ -633,7 +794,8 @@ export default function App() {
             <span style={{color:"#64748b"}}>·</span>
             <span style={{color:"#94a3b8"}}>{user.name}</span>
           </div>
-          <button onClick={()=>setSession(null)} style={{...btn("#1e293b","#64748b","5px 10px"),border:"1px solid #334155",fontSize:11}}>Sign Out</button>
+          <button onClick={()=>{ setShowTour(true); setTourStep(0); }} style={{...btn("#1e293b","#64748b","5px 10px"),border:"1px solid #334155",fontSize:13}}>❓</button>
+          <button onClick={()=>{ setSession(null); try{localStorage.removeItem("io-session");}catch(e){} }} style={{...btn("#1e293b","#64748b","5px 10px"),border:"1px solid #334155",fontSize:11}}>Sign Out</button>
         </div>
       </div>
 
@@ -962,37 +1124,101 @@ export default function App() {
         {/* ══ COST & ANALYTICS ══════════════════════════════════════════════ */}
         {tab==="Cost & Analytics"&&(
           <div>
-            <h2 style={{margin:"0 0 16px",fontSize:20,fontWeight:800,color:"#0f172a"}}>Cost & Analytics</h2>
-            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:14,marginBottom:20}}>
+            <h2 style={{margin:"0 0 16px",fontSize:20,fontWeight:800,color:"#0f172a"}}>💰 Cost & Analytics</h2>
+
+            {/* 4 Metric Cards */}
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",gap:14,marginBottom:20}}>
               {[
-                {label:"Total Cost In",val:fmtC(totalCostIn),color:"#10b981",bg:"#f0fdf4",icon:"📥"},
-                {label:"Total Cost Out",val:fmtC(totalCostOut),color:"#f43f5e",bg:"#fff1f2",icon:"📤"},
-                {label:"Net Stock Value",val:fmtC(stockVal),color:"#6366f1",bg:"#eef2ff",icon:"💎"},
-              ].map(({label,val,color,bg,icon})=>(
-                <div key={label} style={{background:bg,borderRadius:14,padding:"22px 24px",border:`1px solid ${color}33`}}>
-                  <div style={{fontSize:26,marginBottom:8}}>{icon}</div>
-                  <div style={{fontSize:24,fontWeight:900,color}}>{val}</div>
-                  <div style={{fontSize:12,color:"#64748b",marginTop:4}}>{label}</div>
+                {label:"Total Inventory Value",val:fmtC(stockVal),icon:"💎",color:"#6366f1",bg:"linear-gradient(135deg,#eef2ff,#e0e7ff)",border:"#6366f133",change:null},
+                {label:"Today's Stock In",val:fmtC(todayCostIn),icon:"📥",color:"#10b981",bg:"linear-gradient(135deg,#f0fdf4,#dcfce7)",border:"#10b98133",change:todayCostIn>0?"+":null},
+                {label:"Today's Stock Out",val:fmtC(todayCostOut),icon:"📤",color:"#f43f5e",bg:"linear-gradient(135deg,#fff1f2,#ffe4e6)",border:"#f43f5e33",change:todayCostOut>0?"-":null},
+                {label:"Total Cost In (All Time)",val:fmtC(totalCostIn),icon:"📈",color:"#3b82f6",bg:"linear-gradient(135deg,#eff6ff,#dbeafe)",border:"#3b82f633",change:null},
+              ].map(({label,val,icon,color,bg,border,change})=>(
+                <div key={label} style={{background:bg,borderRadius:16,padding:"22px 24px",border:`1px solid ${border}`,boxShadow:"0 2px 8px rgba(0,0,0,0.06)"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
+                    <div style={{fontSize:28}}>{icon}</div>
+                    {change&&<span style={{background:change==="+"?"#dcfce7":"#ffe4e6",color:change==="+"?"#16a34a":"#dc2626",borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:700}}>{change} Today</span>}
+                  </div>
+                  <div style={{fontSize:22,fontWeight:900,color,marginBottom:4}}>{val}</div>
+                  <div style={{fontSize:12,color:"#64748b"}}>{label}</div>
                 </div>
               ))}
             </div>
 
-            {monthlyData.length>0&&(
-              <Card style={{padding:20,marginBottom:20}}>
-                <div style={{fontWeight:700,fontSize:14,color:"#0f172a",marginBottom:16}}>📊 Transaction Volume (last 6 months)</div>
-                <ResponsiveContainer width="100%" height={200}>
-                  <LineChart data={monthlyData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9"/>
-                    <XAxis dataKey="month" tick={{fontSize:11}} stroke="#94a3b8"/>
-                    <YAxis tick={{fontSize:11}} stroke="#94a3b8"/>
-                    <Tooltip/>
-                    <Legend wrapperStyle={{fontSize:12}}/>
-                    <Line type="monotone" dataKey="Transactions" stroke="#6366f1" strokeWidth={2} dot={{r:3}}/>
-                  </LineChart>
-                </ResponsiveContainer>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:20}}>
+              {/* Donut Chart — Category Breakdown */}
+              <Card style={{padding:20}}>
+                <div style={{fontWeight:700,fontSize:14,color:"#0f172a",marginBottom:16}}>🍩 Value by Category</div>
+                {categoryData.length>0?(
+                  <div style={{display:"flex",alignItems:"center",gap:20}}>
+                    <ResponsiveContainer width={160} height={160}>
+                      <PieChart>
+                        <Pie data={categoryData} cx="50%" cy="50%" innerRadius={45} outerRadius={72} dataKey="value" paddingAngle={3}>
+                          {categoryData.map((entry,i)=>(
+                            <Cell key={i} fill={["#6366f1","#3b82f6","#10b981","#f59e0b","#f43f5e","#8b5cf6","#06b6d4"][i%7]}/>
+                          ))}
+                        </Pie>
+                        <Tooltip formatter={v=>fmtC(v)}/>
+                      </PieChart>
+                    </ResponsiveContainer>
+                    <div style={{flex:1,display:"grid",gap:7}}>
+                      {categoryData.map((c,i)=>(
+                        <div key={c.name} style={{display:"flex",alignItems:"center",gap:8,fontSize:12}}>
+                          <div style={{width:10,height:10,borderRadius:"50%",background:["#6366f1","#3b82f6","#10b981","#f59e0b","#f43f5e","#8b5cf6","#06b6d4"][i%7],flexShrink:0}}/>
+                          <span style={{flex:1,color:"#374151"}}>{c.name}</span>
+                          <span style={{fontWeight:700,color:"#0f172a"}}>{fmtC(c.value)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ):<EmptyState icon="📊" msg="No data yet"/>}
               </Card>
-            )}
 
+              {/* Top 5 Most Valuable Materials */}
+              <Card style={{padding:20}}>
+                <div style={{fontWeight:700,fontSize:14,color:"#0f172a",marginBottom:16}}>🏆 Top 5 Most Valuable Stock</div>
+                <div style={{display:"grid",gap:10}}>
+                  {top5Mats.map((m,i)=>{
+                    const val = m.stock*m.unitCost;
+                    const maxVal = top5Mats[0].stock*top5Mats[0].unitCost;
+                    const pct = maxVal>0 ? (val/maxVal)*100 : 0;
+                    return(
+                      <div key={m.id}>
+                        <div style={{display:"flex",justifyContent:"space-between",fontSize:12,marginBottom:3}}>
+                          <span style={{fontWeight:700,color:"#0f172a"}}>{i+1}. {m.name}</span>
+                          <span style={{fontWeight:700,color:"#6366f1"}}>{fmtC(val)}</span>
+                        </div>
+                        <div style={{height:6,background:"#f1f5f9",borderRadius:3,overflow:"hidden"}}>
+                          <div style={{height:"100%",width:`${pct}%`,background:"linear-gradient(90deg,#6366f1,#38bdf8)",borderRadius:3,transition:"width 0.6s"}}/>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </Card>
+            </div>
+
+            {/* 30-Day Inventory Value Trend */}
+            <Card style={{padding:20,marginBottom:20}}>
+              <div style={{fontWeight:700,fontSize:14,color:"#0f172a",marginBottom:16}}>📈 30-Day Inventory Value Trend</div>
+              <ResponsiveContainer width="100%" height={220}>
+                <AreaChart data={trendData} margin={{top:5,right:10,left:10,bottom:0}}>
+                  <defs>
+                    <linearGradient id="stockGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#6366f1" stopOpacity={0.3}/>
+                      <stop offset="95%" stopColor="#6366f1" stopOpacity={0}/>
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9"/>
+                  <XAxis dataKey="label" tick={{fontSize:10}} stroke="#94a3b8" interval={4}/>
+                  <YAxis tick={{fontSize:10}} stroke="#94a3b8" tickFormatter={v=>`₹${(v/1000).toFixed(0)}k`}/>
+                  <Tooltip formatter={v=>[fmtC(v),"Stock Value"]} labelStyle={{fontWeight:700}}/>
+                  <Area type="monotone" dataKey="stockValue" stroke="#6366f1" strokeWidth={2} fill="url(#stockGrad)"/>
+                </AreaChart>
+              </ResponsiveContainer>
+            </Card>
+
+            {/* Material Cost Breakdown Table */}
             <Card style={{overflow:"auto"}}>
               <div style={{padding:"12px 16px",borderBottom:"1px solid #f1f5f9",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                 <span style={{fontWeight:700,fontSize:14,color:"#0f172a"}}>Material Cost Breakdown</span>
@@ -1020,6 +1246,82 @@ export default function App() {
                       </tr>
                     );
                   })}
+                </tbody>
+              </table>
+            </Card>
+          </div>
+        )}
+
+        {/* ══ FORECASTING ══════════════════════════════════════════════════ */}
+        {tab==="Forecasting"&&(
+          <div>
+            <h2 style={{margin:"0 0 6px",fontSize:20,fontWeight:800,color:"#0f172a"}}>🔮 Demand Forecasting</h2>
+            <p style={{margin:"0 0 20px",fontSize:13,color:"#64748b"}}>Based on your last 30 days of stock-out history. Predictions update automatically as you add transactions.</p>
+
+            {/* Summary Alert Bands */}
+            {["critical","warning","watch"].map(level=>{
+              const items = forecasts.filter(f=>f.forecast.urgency===level);
+              if (!items.length) return null;
+              const cfg = {
+                critical:{bg:"#fef2f2",border:"#fca5a5",color:"#991b1b",label:"🚨 Critical — Runs out within 7 days"},
+                warning: {bg:"#fffbeb",border:"#fcd34d",color:"#92400e",label:"⚠️ Warning — Runs out within 14 days"},
+                watch:   {bg:"#eff6ff",border:"#93c5fd",color:"#1e40af",label:"👀 Watch — Runs out within 30 days"},
+              }[level];
+              return(
+                <div key={level} style={{background:cfg.bg,border:`1px solid ${cfg.border}`,borderRadius:12,padding:"10px 16px",marginBottom:12}}>
+                  <div style={{fontWeight:700,fontSize:13,color:cfg.color,marginBottom:8}}>{cfg.label}</div>
+                  <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+                    {items.map(m=>(
+                      <div key={m.id} style={{background:"#fff",borderRadius:8,padding:"6px 12px",border:`1px solid ${cfg.border}`,fontSize:12}}>
+                        <span style={{fontWeight:700}}>{m.name}</span>
+                        <span style={{color:"#64748b",marginLeft:6}}>{m.forecast.daysLeft} days left</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+
+            {/* Forecast Table */}
+            <Card style={{overflow:"auto"}}>
+              <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+                <thead><tr>
+                  <Th c="Material"/>
+                  <Th c="Current Stock" right/>
+                  <Th c="Avg Daily Usage" right/>
+                  <Th c="Days Left" right/>
+                  <Th c="Reorder By" right/>
+                  <Th c="Suggested Qty" right/>
+                  <Th c="Status"/>
+                </tr></thead>
+                <tbody>
+                  {forecasts.map((m,i)=>{
+                    const f = m.forecast;
+                    const urgCfg = {
+                      critical:{color:"#ef4444",bg:"#fef2f2",label:"🚨 Critical"},
+                      warning: {color:"#f59e0b",bg:"#fffbeb",label:"⚠️ Warning"},
+                      watch:   {color:"#3b82f6",bg:"#eff6ff",label:"👀 Watch"},
+                      ok:      {color:"#10b981",bg:"#f0fdf4",label:"✅ OK"},
+                      "no-data":{color:"#94a3b8",bg:"#f8fafc",label:"— No data"},
+                    }[f.urgency];
+                    return(
+                      <tr key={m.id} style={{background:i%2===0?"#f8fafc":"#fff"}}>
+                        <td style={{padding:"10px 13px"}}>
+                          <div style={{fontWeight:700,fontSize:12}}>{m.name}</div>
+                          <div style={{fontSize:11,color:"#94a3b8"}}>{m.id} · {m.unit}</div>
+                        </td>
+                        <Td c={`${fmtN(m.stock)} ${m.unit}`} right bold/>
+                        <Td c={f.avgDailyUsage>0?`${f.avgDailyUsage} ${m.unit}/day`:"—"} right color="#64748b"/>
+                        <Td c={f.daysLeft!==null?`${f.daysLeft} days`:"—"} right bold color={urgCfg.color}/>
+                        <Td c={f.reorderDate||"—"} right color="#374151"/>
+                        <Td c={f.reorderQty?`${f.reorderQty} ${m.unit}`:"—"} right bold color="#6366f1"/>
+                        <td style={{padding:"10px 13px"}}>
+                          <Badge label={urgCfg.label} color={urgCfg.color} bg={urgCfg.bg}/>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {forecasts.length===0&&<tr><td colSpan={7}><EmptyState icon="🔮" msg="Add materials and transactions to see forecasts"/></td></tr>}
                 </tbody>
               </table>
             </Card>
