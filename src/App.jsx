@@ -191,11 +191,13 @@ function Sparkline({ data, color="#38bdf8", width=80, height=32 }) {
     <polyline points={pts} fill="none" stroke={color} strokeWidth={1.5} strokeLinejoin="round" strokeLinecap="round"/>
   </svg>;
 }
+function downloadFile(content, filename, type = "text/csv") {
   const blob = new Blob([content], { type });
   const url  = URL.createObjectURL(blob);
   const a    = document.createElement("a");
   a.href=url; a.download=filename; a.click();
   URL.revokeObjectURL(url);
+}
 
 function toCSV(rows, cols) {
   const header = cols.map(c=>c.label).join(",");
@@ -275,7 +277,7 @@ export default function App() {
         load("io-users"),load("io-mats"),load("io-sups"),load("io-txns"),
         load("io-perms"),load("io-pos"),load("io-runs"),load("io-audit"),
       ]);
-      setUsers(u??SEED_USERS);   setMats(m??[]); setSups(s??SEED_SUPPLIERS);
+      setUsers(u??SEED_USERS);   setMats(m??SEED_MATERIALS); setSups(s??SEED_SUPPLIERS);
       setTxns(t??SEED_TXN);     setPerms(p??DEFAULT_PERMS); setPOs(po??SEED_POs);
       setRuns(r??SEED_RUNS);    setAudit(a??SEED_AUDIT);
       if(!u) save("io-users",SEED_USERS); if(!m) save("io-mats",SEED_MATERIALS);
