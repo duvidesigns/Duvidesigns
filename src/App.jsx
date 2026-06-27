@@ -4,6 +4,7 @@ import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, AreaChart, Area } from "recharts";
 import { ref, set, get } from "firebase/database";
 import { db } from "./firebase";
+import { supabase } from "./supabase";
 import { ROLE_COLORS, ROLE_BADGES, CATEGORIES, UNITS, PO_COLORS, RUN_COLORS, DEFAULT_PERMS, SEED_USERS, SEED_MATERIALS, SEED_SUPPLIERS, SEED_TXN, SEED_POs, SEED_RUNS, SEED_AUDIT } from "./data";
 import { fmtN, fmtC, uid, now, today, fmtTs, stockStatus, getMonthlyData, getForecast, get30DayValueTrend, getCategoryBreakdown, Sparkline, downloadFile, toCSV } from "./helpers";
 import { inp, darkInp, btn, Lbl, Card, Th, Td, Badge, RoleBadge, Toggle, SectionBar, EmptyState } from "./components";
@@ -40,9 +41,57 @@ export default function App() {
   const restoreRef = useRef();
 
   // ── Storage ─────────────────────────────────────────────────────────────────
-  const save = useCallback(async (key, val) => { try { await set(ref(db, "duvidesigns/" + key), JSON.stringify(val)); } catch(e){} }, []);
-  const load = useCallback(async (key) => { try { const snap = await get(ref(db, "duvidesigns/" + key)); return snap.exists() ? JSON.parse(snap.val()) : null; } catch(e){ return null; } }, []);
-
+const save = useCallback(async (key, val) => {
+    if (key === "io-mats") {
+      const rows = (val||[]).map(m => ({ id:m.id, name:m.name, category:m.category, supplier:m.supplier, unit:m.unit, stock:m.stock, threshold:m.threshold, unitcost:m.unitCost }));
+      await supabase.from("materials").upsert(rows); return;
+    }
+    if (key === "io-txns") {
+      const rows=(val||[]).map(t=>({ id:t.id, date:t.date, materialid:t.materialId, type:t.type, qty:t.qty, ref:t.ref, userid:t.userId, source:t.source }));
+      await supabase.from("transactions").upsert(rows); return;
+    }
+    if (key === "io-pos") {
+      const rows=(val||[]).map(o=>({ id:o.id, date:o.date, supplierid:o.supplierId, materialid:o.materialId, qty:o.qty, unitcost:o.unitCost, status:o.status, notes:o.notes, expecteddate:o.expectedDate, receiveddate:o.receivedDate }));
+      await supabase.from("purchase_orders").upsert(rows); return;
+    }
+    if (key === "io-runs") {
+      const rows=(val||[]).map(r=>({ id:r.id, date:r.date, name:r.name, ref:r.ref, items:r.items, userid:r.userId, status:r.status, notes:r.notes }));
+      await supabase.from("production_runs").upsert(rows); return;
+    }
+    if (key === "io-audit") {
+      const rows=(val||[]).map(a=>({ id:a.id, ts:a.ts, userid:a.userId, username:a.userName, userrole:a.userRole, action:a.action, entity:a.entity, entityid:a.entityId, details:a.details }));
+      await supabase.from("audit_log").upsert(rows); return;
+    }
+    try { await set(ref(db, "duvidesigns/" + key), JSON.stringify(val)); } catch(e){}
+  }, []);
+  const load = useCallback(async (key) => {
+    if (key === "io-mats") {
+      const { data } = await supabase.from("materials").select("*");
+      if (!data || data.length===0) return null;
+      return data.map(r => ({ id:r.id, name:r.name, category:r.category, supplier:r.supplier, unit:r.unit, stock:Number(r.stock), threshold:Number(r.threshold), unitCost:Number(r.unitcost) }));
+    }
+    if (key === "io-txns") {
+      const { data } = await supabase.from("transactions").select("*");
+      if (!data || data.length===0) return null;
+      return data.map(r=>({ id:r.id, date:r.date, materialId:r.materialid, type:r.type, qty:Number(r.qty), ref:r.ref, userId:r.userid, source:r.source }));
+    }
+    if (key === "io-pos") {
+      const { data } = await supabase.from("purchase_orders").select("*");
+      if (!data || data.length===0) return null;
+      return data.map(r=>({ id:r.id, date:r.date, supplierId:r.supplierid, materialId:r.materialid, qty:Number(r.qty), unitCost:Number(r.unitcost), status:r.status, notes:r.notes, expectedDate:r.expecteddate, receivedDate:r.receiveddate }));
+    }
+    if (key === "io-runs") {
+      const { data } = await supabase.from("production_runs").select("*");
+      if (!data || data.length===0) return null;
+      return data.map(r=>({ id:r.id, date:r.date, name:r.name, ref:r.ref, items:r.items||[], userId:r.userid, status:r.status, notes:r.notes }));
+    }
+    if (key === "io-audit") {
+      const { data } = await supabase.from("audit_log").select("*").order("ts",{ascending:false}).limit(500);
+      if (!data || data.length===0) return null;
+      return data.map(r=>({ id:r.id, ts:r.ts, userId:r.userid, userName:r.username, userRole:r.userrole, action:r.action, entity:r.entity, entityId:r.entityid, details:r.details }));
+    }
+    try { const snap = await get(ref(db, "duvidesigns/" + key)); return snap.exists() ? JSON.parse(snap.val()) : null; } catch(e){ return null; }
+  }, []);
   // ── Boot ───────────────────────────────────────────────────────────────────
   useEffect(() => {
     (async () => {
@@ -57,6 +106,8 @@ export default function App() {
       if(!s) save("io-sups",SEED_SUPPLIERS); if(!t) save("io-txns",SEED_TXN);
       if(!p) save("io-perms",DEFAULT_PERMS); if(!po) save("io-pos",SEED_POs);
       if(!r) save("io-runs",SEED_RUNS); if(!a) save("io-audit",SEED_AUDIT);
+      const { data: supData } = await supabase.from("suppliers").select("*");
+      setSups(supData||[]);
       setLoading(false);
     })();
   },[]);
@@ -70,7 +121,9 @@ export default function App() {
         load("io-users"),load("io-perms"),load("io-audit"),load("io-sups"),
       ]);
       if(m) setMats(m); if(t) setTxns(t); if(po) setPOs(po); if(r) setRuns(r);
-      if(u) setUsers(u); if(s) setSups(s); if(a) setAudit(a);
+      if(u) setUsers(u); if(a) setAudit(a);
+      const { data: supPoll } = await supabase.from("suppliers").select("*");
+      if(supPoll) setSups(supPoll);
       if(p) { setPerms(p); setSession(prev=>prev?{...prev,perms:p[prev.user.role]}:prev); }
     },10000);
     return ()=>clearInterval(iv);
@@ -187,6 +240,7 @@ export default function App() {
     if (!window.confirm("Delete this material? This cannot be undone.")) return;
     const mat=mats.find(m=>m.id===id);
     const newMats=mats.filter(m=>m.id!==id);
+    await supabase.from("materials").delete().eq("id", id);
     const entry=addAuditEntry("MAT_DEL","Material",id,`Deleted: ${mat?.name}`);
     const newA=[entry,...audit].slice(0,500);
     setMats(newMats); setAudit(newA);
@@ -204,25 +258,29 @@ export default function App() {
   }
 
   // ── Suppliers ───────────────────────────────────────────────────────────────
-  async function submitSup(isEdit) {
+ async function submitSup(isEdit) {
     if (!form.id||!form.name||!form.contact||!form.email) { toast$("Fill required fields","err"); return; }
-    const sup={...form,lead:parseInt(form.lead)||7};
+    const sup={ id:form.id, name:form.name, contact:form.contact, email:form.email, phone:form.phone||"", lead:parseInt(form.lead)||7, materials:form.materials||"", status:form.status||"Active" };
+    const { error } = await supabase.from("suppliers").upsert(sup);
+    if (error) { toast$("Save failed: "+error.message,"err"); return; }
     const newSups=isEdit?sups.map(s=>s.id===target.id?sup:s):[...sups,sup];
     const entry=addAuditEntry(isEdit?"SUP_EDIT":"SUP_ADD","Supplier",sup.id,isEdit?`Edited: ${sup.name}`:`Added: ${sup.name}`);
     const newA=[entry,...audit].slice(0,500);
     setSups(newSups); setAudit(newA);
-    await syncAll({"io-sups":newSups,"io-audit":newA});
+    await syncAll({"io-audit":newA});
     toast$(isEdit?"Supplier updated ✓":"Supplier added ✓"); closeModal();
   }
 
   async function deleteSup(id) {
     if (!window.confirm("Delete this supplier?")) return;
     const sup=sups.find(s=>s.id===id);
+    const { error } = await supabase.from("suppliers").delete().eq("id", id);
+    if (error) { toast$("Delete failed: "+error.message,"err"); return; }
     const newSups=sups.filter(s=>s.id!==id);
     const entry=addAuditEntry("SUP_DEL","Supplier",id,`Deleted: ${sup?.name}`);
     const newA=[entry,...audit].slice(0,500);
     setSups(newSups); setAudit(newA);
-    await syncAll({"io-sups":newSups,"io-audit":newA});
+    await syncAll({"io-audit":newA});
     toast$("Supplier deleted");
   }
 
@@ -297,6 +355,7 @@ export default function App() {
     if (!window.confirm("Delete this run?")) return;
     const run=runs.find(r=>r.id===id);
     const newRuns=runs.filter(r=>r.id!==id);
+    await supabase.from("production_runs").delete().eq("id", id);
     const entry=addAuditEntry("RUN_DEL","Run",id,`Deleted: ${run?.name}`);
     const newA=[entry,...audit].slice(0,500);
     setRuns(newRuns); setAudit(newA);
