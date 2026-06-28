@@ -1,7 +1,7 @@
 // @ts-nocheck
 /* eslint-disable */
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
-import { LayoutDashboard, Package, ArrowLeftRight, FileText, Factory, Truck, BarChart3, TrendingUp, ScrollText, Settings, Boxes, Bell, CircleHelp, LogOut, Sun, Moon, Monitor, AlertTriangle, RefreshCw } from "lucide-react";
+import { LayoutDashboard, Package, ArrowLeftRight, FileText, Factory, Truck, BarChart3, TrendingUp, ScrollText, Settings, Boxes, Bell, CircleHelp, LogOut, Sun, Moon, Monitor, AlertTriangle, RefreshCw, Mail, Lock, Eye, EyeOff, ChevronUp, ChevronDown, User, Calendar, Shield, Phone } from "lucide-react";
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, AreaChart, Area } from "recharts";
 import { ref, set, get } from "firebase/database";
 import { db } from "./firebase";
@@ -41,11 +41,20 @@ export default function App() {
   const [showTour, setShowTour] = useState(false);
   const [tourStep, setTourStep] = useState(0);
   const [syncing,  setSyncing]  = useState(false);
-  const [loginF,   setLoginF]   = useState({ username:"", password:"", error:"" });
+  const [loginF,   setLoginF]   = useState({ username:"", password:"", name:"", phone:"", gender:"", dob:"", error:"", info:"" });
+  const [authView, setAuthView] = useState("signin");
+  const [showPw,   setShowPw]   = useState(false);
   const [showNotif,setShowNotif]= useState(false);
   const [poFilter, setPoFilter] = useState("All");
   const [runFilter,setRunFilter]= useState("All");
   const [theme,    setTheme]    = useState(()=>{ try { return localStorage.getItem("io-theme")||"system"; } catch(e){ return "system"; } });
+  const [now, setNow] = useState(new Date());
+  useEffect(()=>{ const t=setInterval(()=>setNow(new Date()),1000); return ()=>clearInterval(t); },[]);
+  const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [acct, setAcct] = useState({ name:"", phone:"", gender:"", dob:"", curPw:"", newPw:"", confPw:"", error:"", info:"", loading:false });
+  const [acctOpen, setAcctOpen] = useState(null);
+  const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   useEffect(()=>{
     try { localStorage.setItem("io-theme", theme); } catch(e){}
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
@@ -196,12 +205,95 @@ const save = useCallback(async (key, val) => {
   const unread = notifs.filter(n=>!n.read).length;
 
   // ── Login ───────────────────────────────────────────────────────────────────
-  function handleLogin() {
-    const u = users.find(x=>x.username===loginF.username&&x.password===loginF.password);
-    if (!u) { setLoginF(f=>({...f,error:"Incorrect username or password."})); return; }
+  // ── Listen for password-recovery links ──
+  useEffect(()=>{
+    const { data:sub } = supabase.auth.onAuthStateChange((event)=>{
+      if (event==="PASSWORD_RECOVERY") setAuthView("reset");
+    });
+    return ()=>sub?.subscription?.unsubscribe?.();
+  },[]);
+
+  async function handleSignup() {
+    if (loginF.loading) return;
+    const name=(loginF.name||"").trim(), email=(loginF.username||"").trim();
+    if (!name)  { setLoginF(f=>({...f,error:"Please enter your name."})); return; }
+    if (!email||!loginF.password) { setLoginF(f=>({...f,error:"Email and password are required."})); return; }
+    if (loginF.password.length<6) { setLoginF(f=>({...f,error:"Password must be at least 6 characters."})); return; }
+    setLoginF(f=>({...f,error:"",info:"",loading:true}));
+    const { data, error } = await supabase.auth.signUp({ email, password: loginF.password });
+    if (error) { setLoginF(f=>({...f,error:error.message,loading:false})); return; }
+    if (data?.user?.id) {
+      await supabase.from("profiles").insert({ id:data.user.id, name, role:"Pending", phone:(loginF.phone||"").trim()||null, gender:loginF.gender||null, dob:loginF.dob||null });
+    }
+    setAuthView("signin");
+    setLoginF(f=>({...f,password:"",name:"",phone:"",gender:"",dob:"",loading:false,info:"Account created! An admin will assign your access — you can sign in once approved."}));
+  }
+
+  async function handleForgot() {
+    if (loginF.loading) return;
+    const email=(loginF.username||"").trim();
+    if (!email) { setLoginF(f=>({...f,error:"Enter your email first."})); return; }
+    setLoginF(f=>({...f,error:"",info:"",loading:true}));
+    await supabase.auth.resetPasswordForEmail(email, { redirectTo: window.location.origin });
+    setAuthView("signin");
+    setLoginF(f=>({...f,loading:false,info:"If that email exists, a reset link is on its way. Check your inbox (and spam)."}));
+  }
+
+  async function handleReset() {
+    if (loginF.loading) return;
+    if ((loginF.password||"").length<6) { setLoginF(f=>({...f,error:"Password must be at least 6 characters."})); return; }
+    setLoginF(f=>({...f,error:"",loading:true}));
+    const { error } = await supabase.auth.updateUser({ password: loginF.password });
+    if (error) { setLoginF(f=>({...f,error:error.message,loading:false})); return; }
+    setAuthView("signin");
+    setLoginF(f=>({...f,password:"",loading:false,info:"Password updated! You can sign in now."}));
+  }
+
+  async function saveProfile(fields, okMsg) {
+    setAcct(x=>({...x,error:"",info:"",loading:true}));
+    const { error } = await supabase.from("profiles").update(fields).eq("id", session.user.id);
+    if (error) { setAcct(x=>({...x,error:error.message,loading:false})); return; }
+    const ns={...session, user:{...session.user, ...fields}};
+    setSession(ns); try{localStorage.setItem("io-session",JSON.stringify(ns));}catch(e){}
+    setAcct(x=>({...x,loading:false,info:okMsg||"Saved."}));
+  }
+
+  async function changePassword() {
+    if (!acct.curPw||!acct.newPw) { setAcct(x=>({...x,error:"Fill in all password fields."})); return; }
+    if (acct.newPw.length<6) { setAcct(x=>({...x,error:"New password must be at least 6 characters."})); return; }
+    if (acct.newPw!==acct.confPw) { setAcct(x=>({...x,error:"New passwords don't match."})); return; }
+    setAcct(x=>({...x,error:"",info:"",loading:true}));
+    const { error:reErr } = await supabase.auth.signInWithPassword({ email: session.user.email, password: acct.curPw });
+    if (reErr) { setAcct(x=>({...x,error:"Current password is incorrect.",loading:false})); return; }
+    const { error } = await supabase.auth.updateUser({ password: acct.newPw });
+    if (error) { setAcct(x=>({...x,error:error.message,loading:false})); return; }
+    setAcct(x=>({...x,curPw:"",newPw:"",confPw:"",loading:false,info:"Password changed."}));
+  }
+
+  async function handleLogin() {
+    if (loginF.loading) return;
+    setLoginF(f=>({...f,error:"",loading:true}));
+    // 1) Sign in with Supabase Auth (email + password)
+    const { data:authData, error:authErr } = await supabase.auth.signInWithPassword({
+      email: (loginF.username||"").trim(),
+      password: loginF.password,
+    });
+    if (authErr || !authData?.user) {
+      setLoginF(f=>({...f,error:"Incorrect email or password.",loading:false})); return;
+    }
+    // 2) Fetch this user's profile (name + role)
+    const { data:profile, error:profErr } = await supabase
+      .from("profiles").select("*").eq("id", authData.user.id).single();
+    if (profErr || !profile) {
+      await supabase.auth.signOut();
+      setLoginF(f=>({...f,error:"No profile found for this account. Contact an admin.",loading:false})); return;
+    }
+    // 3) Build the app session
+    const u = { id:authData.user.id, name:profile.name, role:profile.role, email:authData.user.email, phone:profile.phone||"", gender:profile.gender||"", dob:profile.dob||"" };
     const p = perms[u.role]??DEFAULT_PERMS[u.role];
     const sess = { user:u, perms:p };
     setSession(sess);
+    setLoginF(f=>({...f,loading:false}));
     try { localStorage.setItem("io-session", JSON.stringify(sess)); } catch(e){}
     // Request push notification permission for Admin and Manager
     if ((u.role==="Admin"||u.role==="Manager") && "Notification" in window && Notification.permission==="default") {
@@ -532,30 +624,118 @@ const save = useCallback(async (key, val) => {
 
   // ════════════════════════════════════════════════════════════════════════════
   // LOGIN
-  if (!session) return (
+  if (!session) {
+    const C={panel:"#232326",inb:"#1a1a1c",bd:"rgba(255,255,255,0.10)",or:"#f2911b",tx:"#f5f5f3",mut:"#9a9a94",fnt:"#6f6f69"};
+    const wrapS={display:"flex",alignItems:"center",gap:9,background:C.inb,border:"1px solid "+C.bd,borderRadius:9,padding:"0 12px",height:42,margin:"6px 0 15px"};
+    const selS={width:"100%",height:42,background:C.inb,border:"1px solid "+C.bd,borderRadius:9,padding:"0 12px",color:C.tx,fontSize:14,margin:"6px 0 15px",fontFamily:"inherit"};
+    const inS={flex:1,background:"transparent",border:"none",outline:"none",color:C.tx,fontSize:14};
+    const lblS={color:"#cfcfc9",fontSize:12,fontWeight:500};
+    const orBtn={background:C.or,color:"#1a1208",border:"none",borderRadius:9,padding:"12px",fontWeight:600,fontSize:14.5,cursor:"pointer",width:"100%"};
+    const ghBtn={background:"transparent",border:"1px solid rgba(242,145,27,0.4)",color:C.or,borderRadius:9,padding:"11px",fontWeight:600,fontSize:14,cursor:"pointer",width:"100%"};
+    const lk={color:C.or,fontSize:12.5,fontWeight:600,cursor:"pointer",background:"none",border:"none",padding:0};
+    const eyeBtn={background:"none",border:"none",cursor:"pointer",color:C.mut,display:"flex",padding:0};
+    const setF=(k,v)=>setLoginF(f=>({...f,[k]:v,error:""}));
+    const msg = loginF.error
+      ? <div style={{background:"rgba(248,113,113,0.12)",borderRadius:8,padding:"9px 12px",color:"#f87171",fontSize:12,fontWeight:500,marginBottom:14}}>{loginF.error}</div>
+      : loginF.info
+      ? <div style={{background:"rgba(242,145,27,0.12)",borderRadius:8,padding:"9px 12px",color:C.or,fontSize:12,fontWeight:500,marginBottom:14}}>{loginF.info}</div>
+      : null;
+    return (
+      <div style={{minHeight:"100vh",display:"flex",background:C.inb,fontFamily:"-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif"}}>
+        <div style={{flex:"1.05",background:"#1a1a1c",padding:"36px",display:"flex",flexDirection:"column",justifyContent:"space-between",position:"relative",overflow:"hidden"}}>
+          <Truck size={230} style={{position:"absolute",right:-30,bottom:-26,color:"rgba(242,145,27,0.05)"}}/>
+          <div style={{position:"relative"}}>
+            <div style={{display:"flex",alignItems:"center",gap:12}}>
+              <div style={{width:42,height:42,borderRadius:10,background:C.or,display:"flex",alignItems:"center",justifyContent:"center",color:"#1a1a1c"}}><Settings size={23}/></div>
+              <div style={{color:C.tx,fontSize:21,fontWeight:600,letterSpacing:"0.12em"}}>DUVI DESIGNS</div>
+            </div>
+            <div style={{color:C.or,fontSize:11,fontWeight:600,letterSpacing:"0.1em",marginTop:9}}>BUILDING QUALITY, DELIVERING EXPERIENCE</div>
+          </div>
+          <div style={{position:"relative"}}>
+            <div style={{color:C.tx,fontSize:31,fontWeight:600,lineHeight:1.18,letterSpacing:"-0.5px"}}>Keep the<br/>workshop moving.</div>
+            <div style={{color:C.mut,fontSize:14,marginTop:14,maxWidth:315,lineHeight:1.6}}>Every part, purchase, and build — tracked from the floor to the finished vehicle.</div>
+          </div>
+          <div style={{color:C.fnt,fontSize:12,position:"relative"}}>ರೈತರ ವಾಹನ · farmers' vehicles</div>
+        </div>
+        <div style={{flex:"0.95",background:C.panel,padding:"38px",display:"flex",flexDirection:"column",justifyContent:"center",minWidth:330,overflowY:"auto"}}>
+          {authView==="signin" && (<>
+            <div style={{color:C.tx,fontSize:22,fontWeight:600}}>Welcome back</div>
+            <div style={{color:C.mut,fontSize:13,marginTop:5,marginBottom:24}}>Sign in to continue</div>
+            {msg}
+            <label style={lblS}>Email</label>
+            <div style={wrapS}><Mail size={17} color={C.mut}/><input type="email" placeholder="you@company.com" value={loginF.username} onChange={e=>setF("username",e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleLogin()} style={inS} autoFocus/></div>
+            <label style={lblS}>Password</label>
+            <div style={{...wrapS,margin:"6px 0 8px"}}><Lock size={17} color={C.mut}/><input type={showPw?"text":"password"} placeholder="••••••••" value={loginF.password} onChange={e=>setF("password",e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleLogin()} style={inS}/><button onClick={()=>setShowPw(s=>!s)} style={eyeBtn}>{showPw?<EyeOff size={17}/>:<Eye size={17}/>}</button></div>
+            <div style={{textAlign:"right",marginBottom:18}}><button style={lk} onClick={()=>{setLoginF(f=>({...f,error:"",info:""}));setAuthView("forgot");}}>Forgot password?</button></div>
+            <button style={orBtn} onClick={handleLogin}>{loginF.loading?"Signing in…":"Sign in"}</button>
+            <div style={{display:"flex",alignItems:"center",gap:12,margin:"20px 0"}}><div style={{flex:1,height:1,background:"rgba(255,255,255,0.10)"}}/><span style={{color:C.mut,fontSize:11.5}}>New here?</span><div style={{flex:1,height:1,background:"rgba(255,255,255,0.10)"}}/></div>
+            <button style={ghBtn} onClick={()=>{setLoginF(f=>({...f,error:"",info:""}));setAuthView("signup");}}>Create an account</button>
+            <div style={{textAlign:"center",color:C.fnt,fontSize:11,lineHeight:1.6,marginTop:16}}>New accounts start with limited access<br/>until an admin assigns your role.</div>
+          </>)}
+          {authView==="signup" && (<>
+            <div style={{color:C.tx,fontSize:22,fontWeight:600}}>Create your account</div>
+            <div style={{color:C.mut,fontSize:13,marginTop:5,marginBottom:24}}>Request access to Duvi Designs</div>
+            {msg}
+            <label style={lblS}>Full name</label>
+            <div style={wrapS}><input type="text" placeholder="Your name" value={loginF.name} onChange={e=>setF("name",e.target.value)} style={inS} autoFocus/></div>
+            <label style={lblS}>Email</label>
+            <div style={wrapS}><Mail size={17} color={C.mut}/><input type="email" placeholder="you@company.com" value={loginF.username} onChange={e=>setF("username",e.target.value)} style={inS}/></div>
+            <label style={lblS}>Phone</label>
+            <div style={wrapS}><Phone size={17} color={C.mut}/><input type="tel" placeholder="Phone number" value={loginF.phone} onChange={e=>setF("phone",e.target.value)} style={inS}/></div>
+            <label style={lblS}>Gender</label>
+            <select value={loginF.gender} onChange={e=>setF("gender",e.target.value)} style={selS}><option value="">Prefer not to say</option><option value="Male">Male</option><option value="Female">Female</option><option value="Other">Other</option></select>
+            <label style={lblS}>Date of birth</label>
+            <input type="date" value={loginF.dob} onChange={e=>setF("dob",e.target.value)} style={selS}/>
+            <label style={lblS}>Password</label>
+            <div style={{...wrapS,margin:"6px 0 16px"}}><Lock size={17} color={C.mut}/><input type={showPw?"text":"password"} placeholder="At least 6 characters" value={loginF.password} onChange={e=>setF("password",e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleSignup()} style={inS}/><button onClick={()=>setShowPw(s=>!s)} style={eyeBtn}>{showPw?<EyeOff size={17}/>:<Eye size={17}/>}</button></div>
+            <button style={orBtn} onClick={handleSignup}>{loginF.loading?"Creating…":"Create account"}</button>
+            <div style={{textAlign:"center",marginTop:18}}><span style={{color:C.mut,fontSize:12.5}}>Already have an account? </span><button style={lk} onClick={()=>{setLoginF(f=>({...f,error:"",info:""}));setAuthView("signin");}}>Sign in</button></div>
+          </>)}
+          {authView==="forgot" && (<>
+            <div style={{color:C.tx,fontSize:22,fontWeight:600}}>Reset password</div>
+            <div style={{color:C.mut,fontSize:13,marginTop:5,marginBottom:24}}>We'll email you a reset link</div>
+            {msg}
+            <label style={lblS}>Email</label>
+            <div style={{...wrapS,margin:"6px 0 16px"}}><Mail size={17} color={C.mut}/><input type="email" placeholder="you@company.com" value={loginF.username} onChange={e=>setF("username",e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleForgot()} style={inS} autoFocus/></div>
+            <button style={orBtn} onClick={handleForgot}>{loginF.loading?"Sending…":"Send reset link"}</button>
+            <div style={{textAlign:"center",marginTop:18}}><button style={lk} onClick={()=>{setLoginF(f=>({...f,error:"",info:""}));setAuthView("signin");}}>Back to sign in</button></div>
+          </>)}
+          {authView==="reset" && (<>
+            <div style={{color:C.tx,fontSize:22,fontWeight:600}}>Set a new password</div>
+            <div style={{color:C.mut,fontSize:13,marginTop:5,marginBottom:24}}>Enter a new password for your account</div>
+            {msg}
+            <label style={lblS}>New password</label>
+            <div style={{...wrapS,margin:"6px 0 16px"}}><Lock size={17} color={C.mut}/><input type={showPw?"text":"password"} placeholder="At least 6 characters" value={loginF.password} onChange={e=>setF("password",e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleReset()} style={inS} autoFocus/><button onClick={()=>setShowPw(s=>!s)} style={eyeBtn}>{showPw?<EyeOff size={17}/>:<Eye size={17}/>}</button></div>
+            <button style={orBtn} onClick={handleReset}>{loginF.loading?"Updating…":"Update password"}</button>
+          </>)}
+        </div>
+      </div>
+    );
+  }
+
+  const user=session.user;
+  const menuItem={display:"flex",alignItems:"center",gap:9,width:"100%",padding:"9px 10px",background:"transparent",border:"none",cursor:"pointer",borderRadius:8,fontSize:13,color:"var(--text)",fontFamily:"inherit",textAlign:"left"};
+  const stRow={display:"flex",alignItems:"center",gap:13,width:"100%",padding:"13px 18px",background:"transparent",border:"none",borderTop:"1px solid var(--border)",cursor:"pointer",fontFamily:"inherit",textAlign:"left"};
+  const stRowRo={...stRow,cursor:"default"};
+  const stMain={flex:1,minWidth:0};
+  const stLabel={fontSize:14,color:"var(--text)"};
+  const stVal={fontSize:12.5,color:"var(--text-secondary)",marginTop:2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"};
+  const stSec={fontSize:11,fontWeight:600,color:"var(--text-muted)",textTransform:"uppercase",letterSpacing:"0.04em",padding:"16px 18px 4px"};
+  const stTag={fontSize:11.5,color:"var(--text-muted)"};
+  const stExp={padding:"0 18px 14px",background:"var(--panel-2)",borderTop:"1px solid var(--border)"};
+  const stSave={background:"var(--accent)",color:"#fff",border:"none",borderRadius:9,padding:"9px 16px",fontWeight:600,fontSize:13,cursor:"pointer",marginTop:12};
+  const clockStr = now.toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"})+" · "+now.toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit",hour12:true});
+
+  if (user.role==="Pending") return (
     <div style={{minHeight:"100vh",background:"var(--bg)",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
-      <div style={{width:"100%",maxWidth:380}}>
-        <div style={{display:"flex",flexDirection:"column",alignItems:"center",marginBottom:26}}>
-          <div style={{width:46,height:46,borderRadius:13,background:"var(--accent)",color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",marginBottom:14}}><Boxes size={26}/></div>
-          <div style={{fontSize:21,fontWeight:600,color:"var(--text)",letterSpacing:"-0.4px"}}>InventoryOS</div>
-          <div style={{fontSize:13,color:"var(--text-muted)",marginTop:5}}>Sign in to your workspace</div>
-        </div>
-        <div style={{background:"var(--panel)",border:"1px solid var(--border)",borderRadius:16,padding:"26px 24px",display:"grid",gap:14}}>
-          <div><Lbl c="Username"/>
-            <input placeholder="Enter username" value={loginF.username} onChange={e=>setLoginF(f=>({...f,username:e.target.value,error:""}))} onKeyDown={e=>e.key==="Enter"&&handleLogin()} style={inp} autoFocus/>
-          </div>
-          <div><Lbl c="Password"/>
-            <input type="password" placeholder="Enter password" value={loginF.password} onChange={e=>setLoginF(f=>({...f,password:e.target.value,error:""}))} onKeyDown={e=>e.key==="Enter"&&handleLogin()} style={inp}/>
-          </div>
-          {loginF.error&&<div style={{background:"var(--danger-bg)",borderRadius:8,padding:"9px 12px",color:"var(--danger)",fontSize:12,fontWeight:500}}>{loginF.error}</div>}
-          <button style={{background:"var(--accent)",color:"#fff",border:"none",borderRadius:9,padding:"11px",fontWeight:600,fontSize:14,cursor:"pointer",marginTop:2}} onClick={handleLogin}>Sign in</button>
-        </div>
-        <div style={{textAlign:"center",fontSize:11,color:"var(--text-muted)",marginTop:18}}>Manufacturing · Raw materials · Multi-user</div>
+      <div style={{maxWidth:420,textAlign:"center",background:"var(--panel)",border:"1px solid var(--border)",borderRadius:16,padding:"36px 30px"}}>
+        <div style={{width:54,height:54,borderRadius:14,background:"var(--warning-bg)",color:"var(--warning)",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px"}}><AlertTriangle size={26}/></div>
+        <div style={{fontSize:19,fontWeight:600,color:"var(--text)"}}>Account awaiting approval</div>
+        <div style={{fontSize:13.5,color:"var(--text-secondary)",marginTop:10,lineHeight:1.6}}>Hi {user.name}, your account is created. An administrator needs to assign your role before you can access the system. Please check back soon.</div>
+        <button onClick={()=>{ supabase.auth.signOut(); setSession(null); try{localStorage.removeItem("io-session");}catch(e){} }} style={{marginTop:22,background:"var(--accent)",color:"#fff",border:"none",borderRadius:9,padding:"10px 22px",fontWeight:600,fontSize:13.5,cursor:"pointer"}}>Sign out</button>
       </div>
     </div>
   );
-
-  const user=session.user;
 
   // ── Tour slides per role ────────────────────────────────────────────────────
   const TOUR_SLIDES_BASE = [
@@ -656,19 +836,26 @@ const save = useCallback(async (key, val) => {
             </button>
           );})}
         </nav>
-        <div style={{marginTop:12,paddingTop:12,borderTop:"1px solid var(--sidebar-border)"}}>
-          <div style={{display:"flex",gap:3,background:"var(--sidebar-active-bg)",borderRadius:9,padding:3,marginBottom:12}}>
-            {[["system",Monitor],["light",Sun],["dark",Moon]].map(([m,Icon])=>(
-              <button key={m} onClick={()=>setTheme(m)} title={m} style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",padding:"6px 0",borderRadius:7,border:"none",cursor:"pointer",background:theme===m?"var(--accent)":"transparent",color:theme===m?"#fff":"var(--sidebar-muted)",transition:"background .15s"}}><Icon size={15}/></button>
-            ))}
-          </div>
-          <div style={{display:"flex",alignItems:"center",gap:10,padding:"4px 6px"}}>
-            <div style={{width:30,height:30,borderRadius:"50%",background:"var(--sidebar-active-bg)",color:"var(--sidebar-text)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:600,flexShrink:0}}>{user.name.charAt(0)}</div>
+        <div style={{marginTop:12,paddingTop:12,borderTop:"1px solid var(--sidebar-border)",position:"relative"}}>
+          {showProfileMenu && (<>
+            <div onClick={()=>{setShowProfileMenu(false);setThemeMenuOpen(false);}} style={{position:"fixed",inset:0,zIndex:60}}/>
+            <div style={{position:"absolute",bottom:"calc(100% + 8px)",left:0,right:0,background:"var(--panel)",border:"1px solid var(--border)",borderRadius:12,boxShadow:"0 12px 30px rgba(0,0,0,0.28)",padding:8,zIndex:61}}>
+              <div style={{padding:"8px 10px 10px"}}>
+                <div style={{fontSize:13,fontWeight:600,color:"var(--text)"}}>{user.name}</div>
+                <div style={{fontSize:11,color:"var(--text-muted)",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{user.email}</div>
+                <div style={{marginTop:7}}><RoleBadge role={user.role}/></div>
+              </div>
+              <div style={{height:1,background:"var(--border)",margin:"4px 6px 6px"}}/>
+              <button onClick={()=>{ setAcct({name:user.name,phone:user.phone||"",gender:user.gender||"",dob:user.dob||"",curPw:"",newPw:"",confPw:"",error:"",info:"",loading:false}); setAcctOpen(null); setShowSettings(true); setShowProfileMenu(false); }} style={menuItem}><Settings size={15}/>Account settings</button>
+              <button onClick={()=>{ supabase.auth.signOut(); setSession(null); try{localStorage.removeItem("io-session");}catch(e){} }} style={{...menuItem,color:"var(--danger)"}}><LogOut size={15}/>Sign out</button>
+            </div>
+          </>)}
+          <div style={{display:"flex",alignItems:"center",gap:10,padding:"6px"}}>
+            <button onClick={()=>setShowProfileMenu(v=>!v)} title="Open menu" style={{width:32,height:32,borderRadius:"50%",background:"var(--sidebar-active-bg)",color:"var(--sidebar-text)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:600,flexShrink:0,border:"none",cursor:"pointer",fontFamily:"inherit"}}>{user.name.charAt(0)}</button>
             <div style={{flex:1,minWidth:0,lineHeight:1.3}}>
               <div style={{fontSize:12,fontWeight:500,color:"var(--sidebar-text)",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{user.name}</div>
               <div style={{fontSize:11,color:"var(--sidebar-muted)",display:"flex",alignItems:"center",gap:5}}><span style={{width:6,height:6,borderRadius:"50%",background:ROLE_COLORS[user.role],display:"inline-block"}}></span>{user.role}</div>
             </div>
-            <button onClick={()=>{ setSession(null); try{localStorage.removeItem("io-session");}catch(e){} }} title="Sign out" style={{background:"transparent",border:"none",cursor:"pointer",color:"var(--sidebar-muted)",display:"flex",padding:6,borderRadius:7}}><LogOut size={16}/></button>
           </div>
         </div>
       </aside>
@@ -678,6 +865,7 @@ const save = useCallback(async (key, val) => {
         <header style={{margin:"-22px -22px 20px",padding:"0 22px",height:60,background:"var(--header-bg)",borderBottom:"1px solid var(--border)",display:"flex",alignItems:"center",gap:14,position:"sticky",top:0,zIndex:50}}>
           <div style={{fontSize:16,fontWeight:600,color:"var(--text)",letterSpacing:"-0.3px"}}>{tab}</div>
           <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:12}}>
+            <span style={{color:"var(--text-secondary)",fontSize:12.5,fontWeight:500,whiteSpace:"nowrap"}}>{clockStr}</span>
             {syncing&&<span style={{color:"var(--text-muted)",fontSize:12,display:"flex",alignItems:"center",gap:5}}><RefreshCw size={13} className="io-spin"/>Syncing</span>}
             {alerts.length>0&&<button onClick={()=>setTab("Inventory")} style={{display:"flex",alignItems:"center",gap:6,background:"var(--warning-bg)",color:"var(--warning)",border:"none",borderRadius:8,padding:"6px 11px",fontSize:12,fontWeight:500,cursor:"pointer"}}><AlertTriangle size={14}/>{alerts.length} alert{alerts.length>1?"s":""}</button>}
             <button onClick={()=>setShowNotif(v=>!v)} style={{position:"relative",background:"transparent",border:"none",cursor:"pointer",color:"var(--text-secondary)",display:"flex",padding:6}}>
@@ -686,6 +874,41 @@ const save = useCallback(async (key, val) => {
             <button onClick={()=>{ setShowTour(true); setTourStep(0); }} title="Help" style={{background:"transparent",border:"none",cursor:"pointer",color:"var(--text-secondary)",display:"flex",padding:6}}><CircleHelp size={19}/></button>
           </div>
         </header>
+
+        {showSettings && (
+          <div onClick={()=>setShowSettings(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:120,padding:20}}>
+            <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:440,background:"var(--panel)",border:"1px solid var(--border)",borderRadius:16,maxHeight:"90vh",overflowY:"auto"}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"16px 18px",borderBottom:"1px solid var(--border)",position:"sticky",top:0,background:"var(--panel)",zIndex:1}}>
+                <div style={{fontSize:16,fontWeight:600,color:"var(--text)"}}>Account settings</div>
+                <button onClick={()=>setShowSettings(false)} style={{background:"transparent",border:"none",cursor:"pointer",color:"var(--text-muted)",fontSize:22,lineHeight:1}}>&times;</button>
+              </div>
+              {(acct.error||acct.info)&&<div style={{padding:"12px 18px 0"}}><div style={{background:acct.error?"var(--danger-bg)":"var(--success-bg)",color:acct.error?"var(--danger)":"var(--success)",borderRadius:8,padding:"9px 12px",fontSize:12,fontWeight:500}}>{acct.error||acct.info}</div></div>}
+
+              <div style={stSec}>Profile</div>
+              <button style={stRow} onClick={()=>setAcctOpen(o=>o==="name"?null:"name")}><User size={18} color="var(--text-secondary)"/><div style={stMain}><div style={stLabel}>Display name</div><div style={stVal}>{user.name}</div></div><ChevronDown size={16} color="var(--text-muted)" style={{transform:acctOpen==="name"?"rotate(180deg)":"none"}}/></button>
+              {acctOpen==="name"&&<div style={stExp}><input value={acct.name} onChange={e=>setAcct(x=>({...x,name:e.target.value,error:"",info:""}))} style={{...inp,marginTop:10}}/><button onClick={()=>{ const n=(acct.name||"").trim(); if(!n){setAcct(x=>({...x,error:"Name can't be empty."}));return;} saveProfile({name:n},"Name updated."); }} style={stSave}>{acct.loading?"Saving…":"Save"}</button></div>}
+              <div style={stRowRo}><Mail size={18} color="var(--text-secondary)"/><div style={stMain}><div style={stLabel}>Email</div><div style={stVal}>{user.email}</div></div><span style={stTag}>Login email</span></div>
+              <div style={stRowRo}><Shield size={18} color="var(--text-secondary)"/><div style={stMain}><div style={stLabel}>Role</div><div style={stVal}>{user.role}</div></div><span style={stTag}>Set by admin</span></div>
+
+              <div style={stSec}>Personal info</div>
+              <button style={stRow} onClick={()=>setAcctOpen(o=>o==="gender"?null:"gender")}><User size={18} color="var(--text-secondary)"/><div style={stMain}><div style={stLabel}>Gender</div><div style={stVal}>{user.gender||"Not set"}</div></div><ChevronDown size={16} color="var(--text-muted)" style={{transform:acctOpen==="gender"?"rotate(180deg)":"none"}}/></button>
+              {acctOpen==="gender"&&<div style={stExp}><select value={acct.gender} onChange={e=>setAcct(x=>({...x,gender:e.target.value,error:"",info:""}))} style={{...inp,marginTop:10}}><option value="">Prefer not to say</option><option value="Male">Male</option><option value="Female">Female</option><option value="Other">Other</option></select><button onClick={()=>saveProfile({gender:acct.gender},"Gender updated.")} style={stSave}>{acct.loading?"Saving…":"Save"}</button></div>}
+              <button style={stRow} onClick={()=>setAcctOpen(o=>o==="dob"?null:"dob")}><Calendar size={18} color="var(--text-secondary)"/><div style={stMain}><div style={stLabel}>Date of birth</div><div style={stVal}>{user.dob||"Not set"}</div></div><ChevronDown size={16} color="var(--text-muted)" style={{transform:acctOpen==="dob"?"rotate(180deg)":"none"}}/></button>
+              {acctOpen==="dob"&&<div style={stExp}><input type="date" value={acct.dob||""} onChange={e=>setAcct(x=>({...x,dob:e.target.value,error:"",info:""}))} style={{...inp,marginTop:10}}/><button onClick={()=>saveProfile({dob:acct.dob||null},"Date of birth updated.")} style={stSave}>{acct.loading?"Saving…":"Save"}</button></div>}
+
+              <button style={stRow} onClick={()=>setAcctOpen(o=>o==="phone"?null:"phone")}><Phone size={18} color="var(--text-secondary)"/><div style={stMain}><div style={stLabel}>Phone</div><div style={stVal}>{user.phone||"Not set"}</div></div><ChevronDown size={16} color="var(--text-muted)" style={{transform:acctOpen==="phone"?"rotate(180deg)":"none"}}/></button>
+              {acctOpen==="phone"&&<div style={stExp}><input type="tel" value={acct.phone} onChange={e=>setAcct(x=>({...x,phone:e.target.value,error:"",info:""}))} placeholder="Phone number" style={{...inp,marginTop:10}}/><button onClick={()=>saveProfile({phone:(acct.phone||"").trim()||null},"Phone updated.")} style={stSave}>{acct.loading?"Saving…":"Save"}</button></div>}
+              <div style={stSec}>Appearance</div>
+              <button style={stRow} onClick={()=>setAcctOpen(o=>o==="theme"?null:"theme")}><Sun size={18} color="var(--text-secondary)"/><div style={stMain}><div style={stLabel}>Theme</div><div style={{...stVal,textTransform:"capitalize"}}>{theme}</div></div><ChevronDown size={16} color="var(--text-muted)" style={{transform:acctOpen==="theme"?"rotate(180deg)":"none"}}/></button>
+              {acctOpen==="theme"&&<div style={stExp}><div style={{display:"flex",gap:6,marginTop:10}}>{[["system",Monitor],["light",Sun],["dark",Moon]].map(([m,Icon])=>(<button key={m} onClick={()=>setTheme(m)} style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"9px 0",borderRadius:8,border:"1px solid var(--border)",cursor:"pointer",background:theme===m?"var(--accent)":"var(--panel)",color:theme===m?"#fff":"var(--text-secondary)",fontSize:12,textTransform:"capitalize",fontFamily:"inherit"}}><Icon size={15}/>{m}</button>))}</div></div>}
+
+              <div style={stSec}>Security</div>
+              <button style={stRow} onClick={()=>setAcctOpen(o=>o==="pw"?null:"pw")}><Lock size={18} color="var(--text-secondary)"/><div style={stMain}><div style={stLabel}>Password</div><div style={stVal}>Change your password</div></div><ChevronDown size={16} color="var(--text-muted)" style={{transform:acctOpen==="pw"?"rotate(180deg)":"none"}}/></button>
+              {acctOpen==="pw"&&<div style={{...stExp,paddingBottom:18}}><div style={{marginTop:10}}><Lbl c="Current password"/><input type="password" value={acct.curPw} onChange={e=>setAcct(x=>({...x,curPw:e.target.value,error:"",info:""}))} style={inp}/></div><div style={{marginTop:10}}><Lbl c="New password"/><input type="password" value={acct.newPw} onChange={e=>setAcct(x=>({...x,newPw:e.target.value,error:"",info:""}))} style={inp}/></div><div style={{marginTop:10}}><Lbl c="Confirm new password"/><input type="password" value={acct.confPw} onChange={e=>setAcct(x=>({...x,confPw:e.target.value,error:"",info:""}))} style={inp}/></div><button onClick={changePassword} style={stSave}>{acct.loading?"Updating…":"Update password"}</button></div>}
+              <div style={{height:16}}/>
+            </div>
+          </div>
+        )}
 
         {/* ══ DASHBOARD ════════════════════════════════════════════════════ */}
         {tab==="Dashboard"&&(

@@ -1,5 +1,5 @@
 // ─── Role Config ──────────────────────────────────────────────────────────────
-export const ROLE_COLORS = { Admin:"#8b5cf6", Manager:"#3b82f6", Warehouse:"#f59e0b", Viewer:"#94a3b8" };
+export const ROLE_COLORS = { Admin:"#8b5cf6", Manager:"#3b82f6", Warehouse:"#f59e0b", Viewer:"#94a3b8", Pending:"#9a9a94" };
 export const ROLE_BADGES = { Admin:"👑", Manager:"🏢", Warehouse:"🏭", Viewer:"👁" };
 export const CATEGORIES  = ["Metal","Polymer","Chemical","Rubber","Composite","Electronics","Other"];
 export const UNITS       = ["kg","g","m","L","pcs","rolls","boxes","sets"];
