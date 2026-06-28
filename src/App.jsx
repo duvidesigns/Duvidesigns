@@ -55,6 +55,7 @@ export default function App() {
   const [acct, setAcct] = useState({ name:"", phone:"", gender:"", dob:"", curPw:"", newPw:"", confPw:"", error:"", info:"", loading:false });
   const [acctOpen, setAcctOpen] = useState(null);
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
+  const [profileUsers, setProfileUsers] = useState([]);
   useEffect(()=>{
     try { localStorage.setItem("io-theme", theme); } catch(e){}
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
@@ -223,7 +224,7 @@ const save = useCallback(async (key, val) => {
     const { data, error } = await supabase.auth.signUp({ email, password: loginF.password });
     if (error) { setLoginF(f=>({...f,error:error.message,loading:false})); return; }
     if (data?.user?.id) {
-      await supabase.from("profiles").insert({ id:data.user.id, name, role:"Pending", phone:(loginF.phone||"").trim()||null, gender:loginF.gender||null, dob:loginF.dob||null });
+      await supabase.from("profiles").insert({ id:data.user.id, name, email, role:"Pending", phone:(loginF.phone||"").trim()||null, gender:loginF.gender||null, dob:loginF.dob||null });
     }
     setAuthView("signin");
     setLoginF(f=>({...f,password:"",name:"",phone:"",gender:"",dob:"",loading:false,info:"Account created! An admin will assign your access — you can sign in once approved."}));
@@ -269,6 +270,26 @@ const save = useCallback(async (key, val) => {
     if (error) { setAcct(x=>({...x,error:error.message,loading:false})); return; }
     setAcct(x=>({...x,curPw:"",newPw:"",confPw:"",loading:false,info:"Password changed."}));
   }
+
+  async function loadProfiles() {
+    const { data, error } = await supabase.from("profiles").select("*").order("name",{ascending:true});
+    if (!error && data) setProfileUsers(data);
+  }
+  async function changeUserRole(id, role) {
+    const { error } = await supabase.from("profiles").update({ role }).eq("id", id);
+    if (error) { alert("Couldn't update role: "+error.message); return; }
+    const tgt=profileUsers.find(p=>p.id===id);
+    setProfileUsers(ps=>ps.map(p=>p.id===id?{...p,role}:p));
+    const entry=addAuditEntry("ROLE_CHANGE","User",id,`${tgt?.name||id} role set to ${role}`, session.user);
+    const newA=[entry,...audit].slice(0,500); setAudit(newA); save("io-audit",newA);
+  }
+  async function removeProfile(id) {
+    if (!window.confirm("Remove this user's access? They'll need to sign up and be approved again to log in.")) return;
+    const { error } = await supabase.from("profiles").delete().eq("id", id);
+    if (error) { alert("Couldn't remove user: "+error.message); return; }
+    setProfileUsers(ps=>ps.filter(p=>p.id!==id));
+  }
+  useEffect(()=>{ if (session && tab==="Admin") loadProfiles(); },[tab, session]);
 
   async function handleLogin() {
     if (loginF.loading) return;
@@ -1472,35 +1493,35 @@ const save = useCallback(async (key, val) => {
           <div>
             <h2 style={{margin:"0 0 20px",fontSize:20,fontWeight:800,color:"var(--text)"}}>⚙ Admin Panel</h2>
 
-            {/* User Management */}
+            {/* User Management (Supabase profiles) */}
             <Card style={{marginBottom:20}}>
-              <div style={{padding:"12px 18px",borderBottom:"1px solid #f1f5f9",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                <span style={{fontWeight:800,fontSize:14,color:"var(--text)"}}>👥 User Management</span>
-                <button style={btn("var(--accent)")} onClick={()=>openModal("addUser")}>＋ Add User</button>
+              <div style={{padding:"14px 18px",borderBottom:"1px solid var(--border)"}}>
+                <div style={{fontWeight:600,fontSize:14,color:"var(--text)"}}>User management</div>
+                <div style={{fontSize:12,color:"var(--text-muted)",marginTop:3}}>People sign up themselves. Assign a role to grant access — set to "Pending" to revoke it.</div>
               </div>
+              <div style={{overflowX:"auto"}}>
               <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
                 <thead><tr style={{background:"var(--panel-2)"}}>
-                  <th style={{padding:"10px 13px",textAlign:"left",fontWeight:700,fontSize:12}}>Name</th>
-                  <th style={{padding:"10px 13px",textAlign:"left",fontWeight:700,fontSize:12}}>Username</th>
-                  <th style={{padding:"10px 13px",textAlign:"left",fontWeight:700,fontSize:12}}>Role</th>
-                  <th style={{padding:"10px 13px",textAlign:"left",fontWeight:700,fontSize:12}}>Actions</th>
+                  <Th c="Name"/><Th c="Email"/><Th c="Phone"/><Th c="Role"/><Th c="Actions"/>
                 </tr></thead>
                 <tbody>
-                  {users.map((u,i)=>(
-                    <tr key={u.id} style={{background:i%2===0?"var(--panel)":"var(--panel-2)"}}>
-                      <td style={{padding:"10px 13px",fontWeight:700,fontSize:12}}>{u.name} {u.id===session.user.id&&<span style={{fontSize:10,color:"var(--text-muted)"}}>(you)</span>}</td>
-                      <Td c={u.username} color="var(--text-muted)"/>
-                      <td style={{padding:"10px 13px"}}><RoleBadge role={u.role}/></td>
-                      <td style={{padding:"10px 13px"}}>
-                        <div style={{display:"flex",gap:6}}>
-                          <button style={{...btn("var(--accent-soft)","var(--accent)","4px 10px"),fontSize:11}} onClick={()=>openModal("editUser",u)}>Edit</button>
-                          {u.id!==session.user.id&&<button style={{...btn("var(--danger-bg)","var(--danger)","4px 10px"),fontSize:11}} onClick={()=>deleteUser(u.id)}>Delete</button>}
-                        </div>
+                  {profileUsers.length===0&&<tr><td colSpan={5} style={{padding:"16px 18px",color:"var(--text-muted)"}}>No users yet.</td></tr>}
+                  {profileUsers.map(u=>{ const self=u.id===session.user.id; const pending=u.role==="Pending"; return (
+                    <tr key={u.id} style={{background:pending?"var(--warning-bg)":"transparent",borderTop:"1px solid var(--border)"}}>
+                      <td style={{padding:"11px 14px",fontWeight:600,color:"var(--text)"}}>{u.name||"—"} {self&&<span style={{fontSize:10,color:"var(--text-muted)",fontWeight:400}}>(you)</span>}</td>
+                      <td style={{padding:"11px 14px",color:"var(--text-secondary)"}}>{u.email||"—"}</td>
+                      <td style={{padding:"11px 14px",color:"var(--text-secondary)"}}>{u.phone||"—"}</td>
+                      <td style={{padding:"11px 14px"}}>
+                        <select value={u.role} disabled={self} onChange={e=>changeUserRole(u.id,e.target.value)} style={{...inp,width:150,height:40,marginBottom:0,fontSize:12.5,fontWeight:600,border:"0.5px solid var(--accent)",borderRadius:10,opacity:self?0.25:1,cursor:self?"not-allowed":"pointer"}}>
+                          <option value="Pending">Pending</option><option value="Viewer">Viewer</option><option value="Warehouse">Warehouse</option><option value="Manager">Manager</option><option value="Admin">Admin</option>
+                        </select>
                       </td>
+                      <td style={{padding:"11px 14px"}}>{!self&&<button onClick={()=>removeProfile(u.id)} style={{...btn("var(--danger-bg)","var(--danger)","5px 12px"),fontSize:11}}>Remove</button>}</td>
                     </tr>
-                  ))}
+                  );})}
                 </tbody>
               </table>
+              </div>
             </Card>
 
             {/* Permissions */}
@@ -1749,7 +1770,7 @@ const save = useCallback(async (key, val) => {
                     }
                   </div>
                 </div>
-                <div style={{display:"flex",gap:10,marginTop:4}}>
+                <div style={{display:"flex",gap:20,marginTop:5}}>
                   <button style={{...btn("var(--accent)"),flex:1}} onClick={()=>submitUser(modal==="editUser")}>{modal==="addUser"?"Create User":"Save Changes"}</button>
                   <button style={btn("var(--panel-2)","var(--text-secondary)")} onClick={closeModal}>Cancel</button>
                 </div>
