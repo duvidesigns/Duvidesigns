@@ -1,6 +1,7 @@
 // @ts-nocheck
 /* eslint-disable */
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
+import { LayoutDashboard, Package, ArrowLeftRight, FileText, Factory, Truck, BarChart3, TrendingUp, ScrollText, Settings, Boxes, Bell, CircleHelp, LogOut, Sun, Moon, Monitor, AlertTriangle, RefreshCw } from "lucide-react";
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, AreaChart, Area } from "recharts";
 import { ref, set, get } from "firebase/database";
 import { db } from "./firebase";
@@ -12,6 +13,12 @@ import { inp, darkInp, btn, Lbl, Card, Th, Td, Badge, RoleBadge, Toggle, Section
 // ═════════════════════════════════════════════════════════════════════════════
 // MAIN APP
 // ═════════════════════════════════════════════════════════════════════════════
+const TAB_ICONS = {
+  "Dashboard":LayoutDashboard, "Inventory":Package, "Transactions":ArrowLeftRight,
+  "Purchase Orders":FileText, "Production Runs":Factory, "Suppliers":Truck,
+  "Cost & Analytics":BarChart3, "Forecasting":TrendingUp, "Audit Log":ScrollText, "Admin":Settings,
+};
+
 export default function App() {
   // ── State ──────────────────────────────────────────────────────────────────
   const [users,    setUsers]    = useState([]);
@@ -38,6 +45,14 @@ export default function App() {
   const [showNotif,setShowNotif]= useState(false);
   const [poFilter, setPoFilter] = useState("All");
   const [runFilter,setRunFilter]= useState("All");
+  const [theme,    setTheme]    = useState(()=>{ try { return localStorage.getItem("io-theme")||"system"; } catch(e){ return "system"; } });
+  useEffect(()=>{
+    try { localStorage.setItem("io-theme", theme); } catch(e){}
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const apply = ()=>{ const r = theme==="system" ? (mq.matches?"dark":"light") : theme; document.documentElement.setAttribute("data-theme", r); };
+    apply(); mq.addEventListener("change", apply);
+    return ()=>mq.removeEventListener("change", apply);
+  },[theme]);
   const restoreRef = useRef();
 
   // ── Storage ─────────────────────────────────────────────────────────────────
@@ -480,6 +495,22 @@ const save = useCallback(async (key, val) => {
   },[txns,session,perms]);
   const filteredMats = useMemo(()=>mats.filter(m=>!search||m.name.toLowerCase().includes(search.toLowerCase())||m.id.toLowerCase().includes(search.toLowerCase())),[mats,search]);
   const monthlyData  = useMemo(()=>getMonthlyData(txns,mats),[txns,mats]);
+  const fmtCompact = (n) => { n=Number(n)||0; const neg=n<0; n=Math.abs(n); let r; if(n>=1e7) r="₹"+(n/1e7).toFixed(2)+" Cr"; else if(n>=1e5) r="₹"+(n/1e5).toFixed(2)+" L"; else if(n>=1e3) r="₹"+(n/1e3).toFixed(1)+"K"; else r="₹"+n.toFixed(0); return (neg?"-":"")+r; };
+  const healthSplit = useMemo(()=>{
+    let healthy=0, low=0, out=0;
+    mats.forEach(m=>{ if(m.stock<=0) out++; else if(m.stock<=m.threshold) low++; else healthy++; });
+    const total=mats.length||1;
+    return { healthy, low, out, total:mats.length, pct:Math.round(healthy/total*100), gp:healthy/total*100, ap:(healthy+low)/total*100 };
+  },[mats]);
+  const topMovers = useMemo(()=>{
+    const since=new Date(); since.setDate(since.getDate()-30);
+    const map={};
+    txns.forEach(t=>{ if(new Date(t.date)<since) return; if(!map[t.materialId]) map[t.materialId]={inn:0,out:0}; if(t.type==="IN") map[t.materialId].inn+=t.qty; else map[t.materialId].out+=t.qty; });
+    return Object.entries(map).map(([id,v])=>{ const m=mats.find(x=>x.id===id); return { id, name:(m&&m.name)||id, unit:(m&&m.unit)||"", inn:v.inn, out:v.out, moved:v.inn+v.out, net:v.inn-v.out }; }).sort((a,b)=>b.moved-a.moved).slice(0,5);
+  },[txns,mats]);
+  const needsAttention = useMemo(()=>{
+    return mats.filter(m=>m.stock<=m.threshold).map(m=>{ const f=getForecast(m,txns,sups); return { id:m.id, name:m.name, unit:m.unit, stock:m.stock, threshold:m.threshold, reorderQty:f.reorderQty }; }).sort((a,b)=>(a.stock/(a.threshold||1))-(b.stock/(b.threshold||1))).slice(0,6);
+  },[mats,txns,sups]);
 
   const TAB_MAP = [
     {key:"Dashboard",label:"📊 Dashboard",perm:"dashboard"},
@@ -497,29 +528,29 @@ const save = useCallback(async (key, val) => {
 
   // ════════════════════════════════════════════════════════════════════════════
   // LOADING
-  if (loading) return <div style={{minHeight:"100vh",background:"#0f172a",display:"flex",alignItems:"center",justifyContent:"center",color:"#38bdf8",fontSize:16,fontFamily:"'DM Sans',sans-serif"}}>Loading InventoryOS…</div>;
+  if (loading) return <div style={{minHeight:"100vh",background:"var(--bg)",display:"flex",alignItems:"center",justifyContent:"center",color:"var(--accent)",fontSize:16,fontFamily:"'DM Sans',sans-serif"}}>Loading InventoryOS…</div>;
 
   // ════════════════════════════════════════════════════════════════════════════
   // LOGIN
   if (!session) return (
-    <div style={{minHeight:"100vh",background:"linear-gradient(135deg,#0f172a 0%,#1e293b 100%)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'DM Sans','Segoe UI',sans-serif",padding:16}}>
-      <div style={{background:"#1e293b",borderRadius:16,padding:"40px 44px",width:"100%",maxWidth:400,boxShadow:"0 30px 60px rgba(0,0,0,0.5)"}}>
-        <div style={{textAlign:"center",marginBottom:30}}>
-          <div style={{fontSize:44,marginBottom:10}}>⚙️</div>
-          <div style={{color:"#38bdf8",fontSize:22,fontWeight:900}}>InventoryOS</div>
-          <div style={{color:"#475569",fontSize:12,marginTop:4}}>Manufacturing · Raw Materials · Multi-User</div>
+    <div style={{minHeight:"100vh",background:"var(--bg)",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+      <div style={{width:"100%",maxWidth:380}}>
+        <div style={{display:"flex",flexDirection:"column",alignItems:"center",marginBottom:26}}>
+          <div style={{width:46,height:46,borderRadius:13,background:"var(--accent)",color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",marginBottom:14}}><Boxes size={26}/></div>
+          <div style={{fontSize:21,fontWeight:600,color:"var(--text)",letterSpacing:"-0.4px"}}>InventoryOS</div>
+          <div style={{fontSize:13,color:"var(--text-muted)",marginTop:5}}>Sign in to your workspace</div>
         </div>
-        <div style={{display:"grid",gap:13}}>
-          <div><Lbl c={<span style={{color:"#94a3b8"}}>Username</span>}/>
-            <input placeholder="Enter username" value={loginF.username} onChange={e=>setLoginF(f=>({...f,username:e.target.value,error:""}))} onKeyDown={e=>e.key==="Enter"&&handleLogin()} style={darkInp} autoFocus/>
+        <div style={{background:"var(--panel)",border:"1px solid var(--border)",borderRadius:16,padding:"26px 24px",display:"grid",gap:14}}>
+          <div><Lbl c="Username"/>
+            <input placeholder="Enter username" value={loginF.username} onChange={e=>setLoginF(f=>({...f,username:e.target.value,error:""}))} onKeyDown={e=>e.key==="Enter"&&handleLogin()} style={inp} autoFocus/>
           </div>
-          <div><Lbl c={<span style={{color:"#94a3b8"}}>Password</span>}/>
-            <input type="password" placeholder="Enter password" value={loginF.password} onChange={e=>setLoginF(f=>({...f,password:e.target.value,error:""}))} onKeyDown={e=>e.key==="Enter"&&handleLogin()} style={darkInp}/>
+          <div><Lbl c="Password"/>
+            <input type="password" placeholder="Enter password" value={loginF.password} onChange={e=>setLoginF(f=>({...f,password:e.target.value,error:""}))} onKeyDown={e=>e.key==="Enter"&&handleLogin()} style={inp}/>
           </div>
-          {loginF.error&&<div style={{background:"#fef2f2",borderRadius:7,padding:"8px 12px",color:"#991b1b",fontSize:12,fontWeight:600}}>❌ {loginF.error}</div>}
-          <button style={{...btn("#38bdf8","#0f172a","11px"),width:"100%",fontSize:14}} onClick={handleLogin}>Sign In →</button>
+          {loginF.error&&<div style={{background:"var(--danger-bg)",borderRadius:8,padding:"9px 12px",color:"var(--danger)",fontSize:12,fontWeight:500}}>{loginF.error}</div>}
+          <button style={{background:"var(--accent)",color:"#fff",border:"none",borderRadius:9,padding:"11px",fontWeight:600,fontSize:14,cursor:"pointer",marginTop:2}} onClick={handleLogin}>Sign in</button>
         </div>
-
+        <div style={{textAlign:"center",fontSize:11,color:"var(--text-muted)",marginTop:18}}>Manufacturing · Raw materials · Multi-user</div>
       </div>
     </div>
   );
@@ -563,29 +594,29 @@ const save = useCallback(async (key, val) => {
   // ════════════════════════════════════════════════════════════════════════════
   // MAIN APP
   return (
-    <div style={{fontFamily:"'DM Sans','Segoe UI',sans-serif",background:"#f1f5f9",minHeight:"100vh"}}>
+    <div style={{display:"flex",minHeight:"100vh",background:"var(--bg)",color:"var(--text)"}}>
 
       {/* Onboarding Tour Modal */}
       {showTour&&tourSlides[tourStep]&&(
         <div style={{position:"fixed",inset:0,zIndex:10000,background:"rgba(0,0,0,0.7)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
-          <div style={{background:"#fff",borderRadius:20,width:"100%",maxWidth:460,padding:"36px 36px 28px",boxShadow:"0 30px 80px rgba(0,0,0,0.4)",position:"relative"}}>
+          <div style={{background:"var(--panel)",borderRadius:20,width:"100%",maxWidth:460,padding:"36px 36px 28px",boxShadow:"0 30px 80px rgba(0,0,0,0.4)",position:"relative"}}>
             {/* Progress bar */}
-            <div style={{position:"absolute",top:0,left:0,right:0,height:4,background:"#f1f5f9",borderRadius:"20px 20px 0 0",overflow:"hidden"}}>
+            <div style={{position:"absolute",top:0,left:0,right:0,height:4,background:"var(--panel-2)",borderRadius:"20px 20px 0 0",overflow:"hidden"}}>
               <div style={{height:"100%",background:"linear-gradient(90deg,#38bdf8,#6366f1)",width:`${((tourStep+1)/tourSlides.length)*100}%`,transition:"width 0.4s"}}/>
             </div>
             <div style={{textAlign:"center",padding:"10px 0 20px"}}>
               <div style={{fontSize:52,marginBottom:14}}>{tourSlides[tourStep].icon}</div>
-              <div style={{fontSize:20,fontWeight:900,color:"#0f172a",marginBottom:10}}>{tourSlides[tourStep].title}</div>
-              <div style={{fontSize:14,color:"#475569",lineHeight:1.7}}>{tourSlides[tourStep].desc}</div>
+              <div style={{fontSize:20,fontWeight:900,color:"var(--text)",marginBottom:10}}>{tourSlides[tourStep].title}</div>
+              <div style={{fontSize:14,color:"var(--text-secondary)",lineHeight:1.7}}>{tourSlides[tourStep].desc}</div>
             </div>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginTop:8}}>
-              <div style={{fontSize:12,color:"#94a3b8"}}>{tourStep+1} of {tourSlides.length}</div>
+              <div style={{fontSize:12,color:"var(--text-muted)"}}>{tourStep+1} of {tourSlides.length}</div>
               <div style={{display:"flex",gap:8}}>
-                <button style={{...btn("#f1f5f9","#64748b","8px 16px"),fontSize:13}} onClick={closeTour}>Skip</button>
-                {tourStep>0&&<button style={{...btn("#e0f2fe","#0369a1","8px 16px"),fontSize:13}} onClick={()=>setTourStep(s=>s-1)}>← Back</button>}
+                <button style={{...btn("var(--panel-2)","var(--text-muted)","8px 16px"),fontSize:13}} onClick={closeTour}>Skip</button>
+                {tourStep>0&&<button style={{...btn("var(--accent-soft)","var(--accent)","8px 16px"),fontSize:13}} onClick={()=>setTourStep(s=>s-1)}>← Back</button>}
                 {tourStep<tourSlides.length-1
-                  ? <button style={{...btn("#6366f1","#fff","8px 20px"),fontSize:13}} onClick={()=>setTourStep(s=>s+1)}>Next →</button>
-                  : <button style={{...btn("#10b981","#fff","8px 20px"),fontSize:13}} onClick={closeTour}>Get Started ✓</button>
+                  ? <button style={{...btn("var(--accent)","#fff","8px 20px"),fontSize:13}} onClick={()=>setTourStep(s=>s+1)}>Next →</button>
+                  : <button style={{...btn("var(--success)","#fff","8px 20px"),fontSize:13}} onClick={closeTour}>Get Started ✓</button>
                 }
               </div>
             </div>
@@ -599,130 +630,148 @@ const save = useCallback(async (key, val) => {
       </div>}
 
       {/* Notification Panel */}
-      {showNotif&&<div style={{position:"fixed",top:54,right:16,zIndex:500,background:"#fff",borderRadius:12,border:"1px solid #e2e8f0",width:340,boxShadow:"0 8px 30px rgba(0,0,0,0.15)",maxHeight:400,overflowY:"auto"}}>
+      {showNotif&&<div style={{position:"fixed",top:54,right:16,zIndex:500,background:"var(--panel)",borderRadius:12,border:"1px solid #e2e8f0",width:340,boxShadow:"0 8px 30px rgba(0,0,0,0.15)",maxHeight:400,overflowY:"auto"}}>
         <div style={{padding:"12px 16px",borderBottom:"1px solid #f1f5f9",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <span style={{fontWeight:700,fontSize:14}}>Notifications</span>
-          <button style={{...btn("#f1f5f9","#374151","4px 10px"),fontSize:11}} onClick={()=>{setNotifs(n=>n.map(x=>({...x,read:true})));setShowNotif(false);}}>Clear all</button>
+          <button style={{...btn("var(--panel-2)","#374151","4px 10px"),fontSize:11}} onClick={()=>{setNotifs(n=>n.map(x=>({...x,read:true})));setShowNotif(false);}}>Clear all</button>
         </div>
         {notifs.length===0?<EmptyState icon="🔔" msg="No notifications"/>:notifs.slice(0,20).map(n=>(
           <div key={n.id} onClick={()=>setNotifs(prev=>prev.map(x=>x.id===n.id?{...x,read:true}:x))} style={{padding:"10px 16px",borderBottom:"1px solid #f8fafc",background:n.read?"#fff":"#fefce8",cursor:"pointer"}}>
-            <div style={{fontSize:12,fontWeight:n.read?400:700,color:"#0f172a"}}>{n.msg}</div>
-            <div style={{fontSize:11,color:"#94a3b8",marginTop:2}}>{n.date}</div>
+            <div style={{fontSize:12,fontWeight:n.read?400:700,color:"var(--text)"}}>{n.msg}</div>
+            <div style={{fontSize:11,color:"var(--text-muted)",marginTop:2}}>{n.date}</div>
           </div>
         ))}
       </div>}
 
-      {/* Header */}
-      <div style={{background:"#0f172a",color:"#fff",padding:"0 20px",display:"flex",alignItems:"center",gap:14,height:52,position:"sticky",top:0,zIndex:100}}>
-        <span style={{fontSize:17,fontWeight:900,color:"#38bdf8",letterSpacing:"-0.5px"}}>⚙ InventoryOS</span>
-        <span style={{color:"#334155",fontSize:12,borderLeft:"1px solid #334155",paddingLeft:14,display:"none"}}>Manufacturing</span>
-        <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:10}}>
-          {syncing&&<span style={{color:"#38bdf8",fontSize:11,fontStyle:"italic"}}>⟳ Syncing…</span>}
-          <div onClick={()=>setShowNotif(v=>!v)} style={{position:"relative",cursor:"pointer",background:"#1e293b",border:"1px solid #334155",borderRadius:8,padding:"5px 10px",fontSize:16}}>
-            🔔{unread>0&&<span style={{position:"absolute",top:-4,right:-4,background:"#ef4444",color:"#fff",borderRadius:"50%",width:16,height:16,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700}}>{unread}</span>}
-          </div>
-          {alerts.length>0&&<div onClick={()=>setTab("Inventory")} style={{background:"#f59e0b",color:"#fff",borderRadius:20,padding:"3px 11px",fontSize:11,fontWeight:700,cursor:"pointer"}}>⚠ {alerts.length} Alert{alerts.length>1?"s":""}</div>}
-          <div style={{background:"#1e293b",border:"1px solid #334155",borderRadius:20,padding:"4px 12px",fontSize:12,display:"flex",alignItems:"center",gap:7}}>
-            <span style={{color:ROLE_COLORS[user.role],fontWeight:700}}>{ROLE_BADGES[user.role]} {user.role}</span>
-            <span style={{color:"#64748b"}}>·</span>
-            <span style={{color:"#94a3b8"}}>{user.name}</span>
-          </div>
-          <button onClick={()=>{ setShowTour(true); setTourStep(0); }} style={{...btn("#1e293b","#64748b","5px 10px"),border:"1px solid #334155",fontSize:13}}>❓</button>
-          <button onClick={()=>{ setSession(null); try{localStorage.removeItem("io-session");}catch(e){} }} style={{...btn("#1e293b","#64748b","5px 10px"),border:"1px solid #334155",fontSize:11}}>Sign Out</button>
+      {/* Sidebar */}
+      <aside style={{width:230,flexShrink:0,background:"var(--sidebar-bg)",borderRight:"1px solid var(--sidebar-border)",height:"100vh",position:"sticky",top:0,display:"flex",flexDirection:"column",padding:"16px 12px",zIndex:100}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,padding:"4px 8px 18px"}}>
+          <div style={{width:30,height:30,borderRadius:8,background:"var(--accent)",color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><Boxes size={18}/></div>
+          <span style={{fontSize:15,fontWeight:600,color:"var(--sidebar-text)",letterSpacing:"-0.3px"}}>InventoryOS</span>
         </div>
-      </div>
+        <nav style={{display:"flex",flexDirection:"column",gap:2,overflowY:"auto",flex:1}}>
+          {visibleTabs.map(t=>{ const Icon=TAB_ICONS[t.key]||LayoutDashboard; const active=tab===t.key; return (
+            <button key={t.key} onClick={()=>{setTab(t.key);setShowNotif(false);}} style={{display:"flex",alignItems:"center",gap:11,padding:"9px 11px",borderRadius:9,border:"none",cursor:"pointer",background:active?"var(--sidebar-active-bg)":"transparent",color:active?"var(--sidebar-active-text)":"var(--sidebar-muted)",fontSize:13,fontWeight:active?500:400,fontFamily:"inherit",textAlign:"left",width:"100%",transition:"background .15s,color .15s"}}>
+              <Icon size={17} style={{flexShrink:0}}/>{t.key}
+            </button>
+          );})}
+        </nav>
+        <div style={{marginTop:12,paddingTop:12,borderTop:"1px solid var(--sidebar-border)"}}>
+          <div style={{display:"flex",gap:3,background:"var(--sidebar-active-bg)",borderRadius:9,padding:3,marginBottom:12}}>
+            {[["system",Monitor],["light",Sun],["dark",Moon]].map(([m,Icon])=>(
+              <button key={m} onClick={()=>setTheme(m)} title={m} style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",padding:"6px 0",borderRadius:7,border:"none",cursor:"pointer",background:theme===m?"var(--accent)":"transparent",color:theme===m?"#fff":"var(--sidebar-muted)",transition:"background .15s"}}><Icon size={15}/></button>
+            ))}
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:10,padding:"4px 6px"}}>
+            <div style={{width:30,height:30,borderRadius:"50%",background:"var(--sidebar-active-bg)",color:"var(--sidebar-text)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:600,flexShrink:0}}>{user.name.charAt(0)}</div>
+            <div style={{flex:1,minWidth:0,lineHeight:1.3}}>
+              <div style={{fontSize:12,fontWeight:500,color:"var(--sidebar-text)",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{user.name}</div>
+              <div style={{fontSize:11,color:"var(--sidebar-muted)",display:"flex",alignItems:"center",gap:5}}><span style={{width:6,height:6,borderRadius:"50%",background:ROLE_COLORS[user.role],display:"inline-block"}}></span>{user.role}</div>
+            </div>
+            <button onClick={()=>{ setSession(null); try{localStorage.removeItem("io-session");}catch(e){} }} title="Sign out" style={{background:"transparent",border:"none",cursor:"pointer",color:"var(--sidebar-muted)",display:"flex",padding:6,borderRadius:7}}><LogOut size={16}/></button>
+          </div>
+        </div>
+      </aside>
 
-      {/* Nav */}
-      <div style={{background:"#1e293b",display:"flex",padding:"0 20px",gap:1,overflowX:"auto",position:"sticky",top:52,zIndex:99}}>
-        {visibleTabs.map(t=>(
-          <button key={t.key} onClick={()=>{setTab(t.key);setShowNotif(false);}} style={{padding:"9px 13px",border:"none",cursor:"pointer",fontSize:11,fontWeight:700,background:tab===t.key?"#0f172a":"transparent",color:tab===t.key?"#38bdf8":"#64748b",borderBottom:tab===t.key?"2px solid #38bdf8":"2px solid transparent",whiteSpace:"nowrap"}}>
-            {t.label}
-          </button>
-        ))}
-      </div>
-
-      <div style={{padding:"20px",maxWidth:1400,margin:"0 auto"}}>
+      <div style={{flex:1,minWidth:0,padding:"22px",background:"var(--bg)"}}>
+        {/* Top bar */}
+        <header style={{margin:"-22px -22px 20px",padding:"0 22px",height:60,background:"var(--header-bg)",borderBottom:"1px solid var(--border)",display:"flex",alignItems:"center",gap:14,position:"sticky",top:0,zIndex:50}}>
+          <div style={{fontSize:16,fontWeight:600,color:"var(--text)",letterSpacing:"-0.3px"}}>{tab}</div>
+          <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:12}}>
+            {syncing&&<span style={{color:"var(--text-muted)",fontSize:12,display:"flex",alignItems:"center",gap:5}}><RefreshCw size={13} className="io-spin"/>Syncing</span>}
+            {alerts.length>0&&<button onClick={()=>setTab("Inventory")} style={{display:"flex",alignItems:"center",gap:6,background:"var(--warning-bg)",color:"var(--warning)",border:"none",borderRadius:8,padding:"6px 11px",fontSize:12,fontWeight:500,cursor:"pointer"}}><AlertTriangle size={14}/>{alerts.length} alert{alerts.length>1?"s":""}</button>}
+            <button onClick={()=>setShowNotif(v=>!v)} style={{position:"relative",background:"transparent",border:"none",cursor:"pointer",color:"var(--text-secondary)",display:"flex",padding:6}}>
+              <Bell size={19}/>{unread>0&&<span style={{position:"absolute",top:0,right:0,minWidth:15,height:15,padding:"0 3px",boxSizing:"border-box",background:"var(--danger)",color:"#fff",borderRadius:8,fontSize:9,fontWeight:600,display:"flex",alignItems:"center",justifyContent:"center"}}>{unread}</span>}
+            </button>
+            <button onClick={()=>{ setShowTour(true); setTourStep(0); }} title="Help" style={{background:"transparent",border:"none",cursor:"pointer",color:"var(--text-secondary)",display:"flex",padding:6}}><CircleHelp size={19}/></button>
+          </div>
+        </header>
 
         {/* ══ DASHBOARD ════════════════════════════════════════════════════ */}
         {tab==="Dashboard"&&(
           <div>
-            <h2 style={{margin:"0 0 16px",fontSize:20,fontWeight:800,color:"#0f172a"}}>Overview</h2>
-            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:12,marginBottom:20}}>
-              {[
-                {label:"Materials",val:mats.length,icon:"📦",color:"#3b82f6",bg:"#eff6ff"},
-                ...(data("viewCosts")?[
-                  {label:"Stock Value",val:fmtC(stockVal),icon:"💎",color:"#6366f1",bg:"#eef2ff"},
-                  {label:"Cost In",val:fmtC(totalCostIn),icon:"📥",color:"#10b981",bg:"#f0fdf4"},
-                  {label:"Cost Out",val:fmtC(totalCostOut),icon:"📤",color:"#f43f5e",bg:"#fff1f2"},
-                ]:[]),
-                {label:"Low Stock Alerts",val:alerts.length,icon:"⚠",color:"#f59e0b",bg:"#fffbeb"},
-                {label:"Pending POs",val:pos.filter(p=>p.status==="Pending").length,icon:"🧾",color:"#06b6d4",bg:"#ecfeff"},
-                {label:"Active Runs",val:runs.filter(r=>r.status==="Planned"||r.status==="In Progress").length,icon:"🏭",color:"#8b5cf6",bg:"#f5f3ff"},
-              ].map(({label,val,icon,color,bg})=>(
-                <div key={label} style={{background:bg,borderRadius:12,padding:"15px 17px",border:`1px solid ${color}22`}}>
-                  <div style={{fontSize:22,marginBottom:6}}>{icon}</div>
-                  <div style={{fontSize:18,fontWeight:900,color}}>{val}</div>
-                  <div style={{fontSize:11,color:"#64748b",marginTop:2}}>{label}</div>
+            {/* Hero band */}
+            <div style={{display:"flex",alignItems:"stretch",flexWrap:"wrap",gap:20,background:"var(--panel)",border:"1px solid var(--border)",borderRadius:14,padding:"18px 22px",marginBottom:13}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"center"}}>
+                <div style={{width:104,height:104,borderRadius:"50%",position:"relative",background:`conic-gradient(var(--success) 0 ${healthSplit.gp}%, var(--warning) ${healthSplit.gp}% ${healthSplit.ap}%, var(--danger) ${healthSplit.ap}% 100%)`}}>
+                  <div style={{position:"absolute",inset:11,borderRadius:"50%",background:"var(--panel)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}>
+                    <div style={{fontSize:23,fontWeight:600,color:"var(--text)",letterSpacing:"-0.5px",lineHeight:1}}>{healthSplit.pct}%</div>
+                    <div style={{fontSize:11,color:"var(--text-muted)",marginTop:3}}>healthy</div>
+                  </div>
                 </div>
-              ))}
+              </div>
+              <div style={{borderLeft:"1px solid var(--border)",paddingLeft:22,display:"flex",flexDirection:"column",justifyContent:"center"}}>
+                <div style={{fontSize:11,color:"var(--text-muted)",textTransform:"uppercase",letterSpacing:"0.04em",marginBottom:12}}>Stock health · {healthSplit.total} items</div>
+                {[["var(--success)",healthSplit.healthy,"healthy"],["var(--warning)",healthSplit.low,"low stock"],["var(--danger)",healthSplit.out,"out of stock"]].map(([c,n,l])=>(
+                  <div key={l} style={{display:"flex",alignItems:"center",gap:9,marginBottom:9,fontSize:13,color:"var(--text)"}}>
+                    <span style={{width:8,height:8,borderRadius:"50%",background:c,flexShrink:0}}></span>
+                    <b style={{fontWeight:600,width:34}}>{fmtN(n)}</b><span style={{color:"var(--text-muted)"}}>{l}</span>
+                  </div>
+                ))}
+              </div>
+              {data("viewCosts")&&(
+                <div style={{borderLeft:"1px solid var(--border)",paddingLeft:22,display:"flex",flexDirection:"column",justifyContent:"center"}}>
+                  <div style={{fontSize:11,color:"var(--text-muted)",textTransform:"uppercase",letterSpacing:"0.04em",marginBottom:10}}>Total stock value</div>
+                  <div style={{fontSize:30,fontWeight:600,color:"var(--text)",letterSpacing:"-1px",lineHeight:1}}>{fmtCompact(stockVal)}</div>
+                  <div style={{fontSize:12,color:"var(--text-muted)",marginTop:8}}>across {mats.length} materials</div>
+                </div>
+              )}
             </div>
 
-            {data("viewCosts")&&monthlyData.length>0&&(
-              <Card style={{padding:20,marginBottom:20}}>
-                <div style={{fontWeight:700,fontSize:14,color:"#0f172a",marginBottom:16}}>📈 Monthly Cost Flow (last 6 months)</div>
-                <ResponsiveContainer width="100%" height={220}>
-                  <BarChart data={monthlyData} margin={{top:0,right:10,left:10,bottom:0}}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9"/>
-                    <XAxis dataKey="month" tick={{fontSize:11}} stroke="#94a3b8"/>
-                    <YAxis tick={{fontSize:11}} stroke="#94a3b8" tickFormatter={v=>`$${(v/1000).toFixed(0)}k`}/>
-                    <Tooltip formatter={(v,n)=>[fmtC(v),n]} labelStyle={{fontWeight:700}}/>
-                    <Legend wrapperStyle={{fontSize:12}}/>
-                    <Bar dataKey="Cost In" fill="#10b981" radius={[4,4,0,0]}/>
-                    <Bar dataKey="Cost Out" fill="#f43f5e" radius={[4,4,0,0]}/>
-                  </BarChart>
-                </ResponsiveContainer>
-              </Card>
-            )}
-
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
-              {alerts.length>0&&(
-                <Card style={{border:"1px solid #fde68a"}}>
-                  <div style={{background:"#fef3c7",padding:"10px 16px",fontWeight:800,color:"#92400e",fontSize:13}}>⚠ Stock Alerts ({alerts.length})</div>
-                  {alerts.map(m=>{const s=stockStatus(m.stock,m.threshold); return(
-                    <div key={m.id} style={{display:"flex",alignItems:"center",padding:"9px 16px",borderTop:"1px solid #fef9c3",gap:10}}>
-                      <div style={{flex:1}}>
-                        <div style={{fontWeight:700,fontSize:12}}>{m.name}</div>
-                        <div style={{fontSize:11,color:"#64748b"}}>{m.id}</div>
+            {/* Main row */}
+            <div style={{display:"grid",gridTemplateColumns:"1.6fr 1fr",gap:13,marginBottom:13}}>
+              <div style={{background:"var(--panel)",border:"1px solid var(--border)",borderRadius:14,padding:"15px 18px"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                  <span style={{fontSize:13,fontWeight:600,color:"var(--text)"}}>Most active materials</span>
+                  <span style={{fontSize:11,color:"var(--text-muted)"}}>last 30 days · by qty moved</span>
+                </div>
+                {topMovers.length===0
+                  ? <EmptyState icon="—" msg="No stock movement in the last 30 days"/>
+                  : topMovers.map(mv=>{ const moved=mv.moved||1; const inPct=Math.round(mv.inn/moved*100); return (
+                    <div key={mv.id} style={{display:"flex",alignItems:"center",gap:12,padding:"9px 0",borderTop:"1px solid var(--border)"}}>
+                      <span style={{width:120,fontSize:13,color:"var(--text)",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{mv.name}</span>
+                      <div style={{flex:1,height:7,borderRadius:4,background:"var(--panel-2)",overflow:"hidden",display:"flex"}}>
+                        <span style={{width:`${inPct}%`,background:"var(--accent)"}}></span>
+                        <span style={{width:`${100-inPct}%`,background:"var(--text-muted)",opacity:.5}}></span>
                       </div>
-                      <Badge label={`${fmtN(m.stock)} ${m.unit}`} color={s.color} bg={s.bg}/>
-                      <Badge label={s.label} color={s.color} bg={s.bg}/>
+                      <span style={{width:74,textAlign:"right",fontSize:12,fontWeight:600,color:mv.net>0?"var(--success)":mv.net<0?"var(--danger)":"var(--text-muted)"}}>{mv.net>0?"+":""}{fmtN(mv.net)} {mv.unit}</span>
                     </div>
                   );})}
-                </Card>
-              )}
-              <Card>
-                <div style={{padding:"10px 16px",borderBottom:"1px solid #f1f5f9",fontWeight:700,fontSize:13,color:"#0f172a",display:"flex",justifyContent:"space-between"}}>
-                  Recent Activity
-                  <span style={{fontSize:11,color:"#94a3b8",fontWeight:400}}>Auto-refresh 10s</span>
+                {topMovers.length>0&&<div style={{display:"flex",gap:16,marginTop:11,fontSize:11,color:"var(--text-muted)"}}><span><span style={{display:"inline-block",width:9,height:9,borderRadius:2,background:"var(--accent)",marginRight:6,verticalAlign:"middle"}}></span>In</span><span><span style={{display:"inline-block",width:9,height:9,borderRadius:2,background:"var(--text-muted)",opacity:.5,marginRight:6,verticalAlign:"middle"}}></span>Out</span></div>}
+              </div>
+
+              <div style={{background:"var(--panel)",border:"1px solid var(--border)",borderRadius:14,padding:"15px 18px"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                  <span style={{fontSize:13,fontWeight:600,color:"var(--text)"}}>Needs attention</span>
+                  <span style={{fontSize:11,color:"var(--text-muted)"}}>{needsAttention.length}</span>
                 </div>
-                {visibleTxn.slice(0,6).map(tx=>{
-                  const m=mats.find(x=>x.id===tx.materialId);
-                  const u=users.find(x=>x.id===tx.userId);
-                  return(
-                    <div key={tx.id} style={{display:"flex",alignItems:"center",padding:"9px 16px",borderBottom:"1px solid #f8fafc",gap:10}}>
-                      <Badge label={tx.type} color={tx.type==="IN"?"#065f46":"#991b1b"} bg={tx.type==="IN"?"#d1fae5":"#fee2e2"}/>
-                      <div style={{flex:1}}>
-                        <div style={{fontWeight:600,fontSize:12}}>{m?.name||tx.materialId}</div>
-                        <div style={{fontSize:11,color:"#64748b"}}>{tx.ref} · <span style={{color:ROLE_COLORS[u?.role]||"#94a3b8"}}>{u?.name||"—"}</span></div>
+                {needsAttention.length===0
+                  ? <div style={{display:"flex",alignItems:"center",gap:9,padding:"14px 0",fontSize:13,color:"var(--text-muted)"}}><span style={{width:8,height:8,borderRadius:"50%",background:"var(--success)"}}></span>All materials above threshold</div>
+                  : needsAttention.map(m=>{ const isOut=m.stock<=0; return (
+                    <div key={m.id} style={{display:"flex",alignItems:"center",gap:11,padding:"9px 0",borderTop:"1px solid var(--border)"}}>
+                      <span style={{width:8,height:8,borderRadius:"50%",background:isOut?"var(--danger)":"var(--warning)",flexShrink:0}}></span>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:13,color:"var(--text)",fontWeight:500,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{m.name}</div>
+                        <div style={{fontSize:11,color:"var(--text-muted)"}}>{m.reorderQty?`reorder ~${fmtN(m.reorderQty)} ${m.unit}`:"below threshold"}</div>
                       </div>
-                      <div style={{textAlign:"right"}}>
-                        <div style={{fontWeight:700,fontSize:12}}>{fmtN(tx.qty)} {m?.unit}</div>
-                        <div style={{fontSize:11,color:"#94a3b8"}}>{tx.date}</div>
-                      </div>
+                      <span style={{fontSize:12,fontWeight:600,color:isOut?"var(--danger)":"var(--warning)",whiteSpace:"nowrap"}}>{fmtN(m.stock)} {m.unit}</span>
                     </div>
-                  );
-                })}
-              </Card>
+                  );})}
+              </div>
+            </div>
+
+            {/* Secondary strip */}
+            <div style={{display:"flex",flexWrap:"wrap",background:"var(--panel)",border:"1px solid var(--border)",borderRadius:14,overflow:"hidden"}}>
+              {[
+                ...(data("viewCosts")?[["Cost in · this month",fmtCompact(totalCostIn)],["Cost out · this month",fmtCompact(totalCostOut)]]:[]),
+                ["Pending POs", String(pos.filter(p=>p.status==="Pending").length)],
+                ["Active runs", String(runs.filter(r=>r.status==="Planned"||r.status==="In Progress").length)],
+              ].map(([l,v],i)=>(
+                <div key={l} style={{flex:1,minWidth:130,padding:"14px 18px",borderLeft:i===0?"none":"1px solid var(--border)"}}>
+                  <div style={{fontSize:11,color:"var(--text-muted)",marginBottom:6}}>{l}</div>
+                  <div style={{fontSize:17,fontWeight:600,color:"var(--text)",letterSpacing:"-0.3px"}}>{v}</div>
+                </div>
+              ))}
             </div>
           </div>
         )}
@@ -732,10 +781,10 @@ const save = useCallback(async (key, val) => {
           <div>
             <SectionBar title="Inventory">
               <input placeholder="🔍 Search…" value={search} onChange={e=>setSearch(e.target.value)} style={{...inp,width:170}}/>
-              {can("exportData")&&<button style={btn("#475569")} onClick={exportInventoryCSV}>⬇ Export CSV</button>}
-              {can("addMat")&&<button style={btn("#6366f1")} onClick={()=>openModal("addMat")}>＋ Add Material</button>}
-              {can("stockIn")&&<button style={btn("#10b981")} onClick={()=>openModal("txnIn")}>📥 Stock In</button>}
-              {can("stockOut")&&<button style={btn("#f43f5e")} onClick={()=>openModal("txnOut")}>📤 Stock Out</button>}
+              {can("exportData")&&<button style={btn("var(--text-secondary)")} onClick={exportInventoryCSV}>⬇ Export CSV</button>}
+              {can("addMat")&&<button style={btn("var(--accent)")} onClick={()=>openModal("addMat")}>＋ Add Material</button>}
+              {can("stockIn")&&<button style={btn("var(--success)")} onClick={()=>openModal("txnIn")}>📥 Stock In</button>}
+              {can("stockOut")&&<button style={btn("var(--danger)")} onClick={()=>openModal("txnOut")}>📤 Stock Out</button>}
             </SectionBar>
             <Card style={{overflow:"auto"}}>
               <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
@@ -747,25 +796,25 @@ const save = useCallback(async (key, val) => {
                 </tr></thead>
                 <tbody>
                   {filteredMats.map((m,i)=>{const s=stockStatus(m.stock,m.threshold); return(
-                    <tr key={m.id} style={{background:i%2===0?"#f8fafc":"#fff"}}>
+                    <tr key={m.id} style={{background:i%2===0?"var(--panel-2)":"var(--panel)"}}>
                       <Td c={m.id} color="#3b82f6" bold style={{fontSize:11}}/>
                       <Td c={m.name} bold/>
-                      <Td c={m.category} color="#64748b"/>
-                      <Td c={m.supplier} color="#64748b"/>
-                      <Td c={m.unit} color="#94a3b8"/>
+                      <Td c={m.category} color="var(--text-muted)"/>
+                      <Td c={m.supplier} color="var(--text-muted)"/>
+                      <Td c={m.unit} color="var(--text-muted)"/>
                       <td style={{padding:"9px 13px",textAlign:"right",fontWeight:700,color:s.color,fontSize:12}}>{fmtN(m.stock)}</td>
                       <td style={{padding:"9px 13px",textAlign:"right",fontSize:12}}>
                         <span style={{display:"flex",alignItems:"center",justifyContent:"flex-end",gap:5}}>
                           {fmtN(m.threshold)}
-                          {can("editThresh")&&<span onClick={()=>openModal("editThreshold",m)} style={{cursor:"pointer",color:"#94a3b8",fontSize:10}}>✏</span>}
+                          {can("editThresh")&&<span onClick={()=>openModal("editThreshold",m)} style={{cursor:"pointer",color:"var(--text-muted)",fontSize:10}}>✏</span>}
                         </span>
                       </td>
                       <td style={{padding:"9px 13px"}}><Badge label={`● ${s.label}`} color={s.color} bg={s.bg}/></td>
                       {data("viewCosts")&&<><Td c={fmtC(m.unitCost)} right/><Td c={fmtC(m.stock*m.unitCost)} right bold/></>}
                       <td style={{padding:"9px 13px"}}>
                         <div style={{display:"flex",gap:5}}>
-                          {can("editMat")&&<button style={{...btn("#e0f2fe","#0369a1","4px 9px"),fontSize:11}} onClick={()=>openModal("editMat",m)}>Edit</button>}
-                          {can("delMat")&&<button style={{...btn("#fee2e2","#991b1b","4px 9px"),fontSize:11}} onClick={()=>deleteMat(m.id)}>Del</button>}
+                          {can("editMat")&&<button style={{...btn("var(--accent-soft)","var(--accent)","4px 9px"),fontSize:11}} onClick={()=>openModal("editMat",m)}>Edit</button>}
+                          {can("delMat")&&<button style={{...btn("var(--danger-bg)","var(--danger)","4px 9px"),fontSize:11}} onClick={()=>deleteMat(m.id)}>Del</button>}
                         </div>
                       </td>
                     </tr>
@@ -780,10 +829,10 @@ const save = useCallback(async (key, val) => {
         {/* ══ TRANSACTIONS ══════════════════════════════════════════════════ */}
         {tab==="Transactions"&&(
           <div>
-            <SectionBar title={<>Transactions {!data("viewAllTxn")&&<span style={{fontSize:12,color:"#94a3b8",fontWeight:400}}>(your entries only)</span>}</>}>
-              {can("exportData")&&<button style={btn("#475569")} onClick={exportTxnCSV}>⬇ Export CSV</button>}
-              {can("stockIn")&&<button style={btn("#10b981")} onClick={()=>openModal("txnIn")}>📥 Stock In</button>}
-              {can("stockOut")&&<button style={btn("#f43f5e")} onClick={()=>openModal("txnOut")}>📤 Stock Out</button>}
+            <SectionBar title={<>Transactions {!data("viewAllTxn")&&<span style={{fontSize:12,color:"var(--text-muted)",fontWeight:400}}>(your entries only)</span>}</>}>
+              {can("exportData")&&<button style={btn("var(--text-secondary)")} onClick={exportTxnCSV}>⬇ Export CSV</button>}
+              {can("stockIn")&&<button style={btn("var(--success)")} onClick={()=>openModal("txnIn")}>📥 Stock In</button>}
+              {can("stockOut")&&<button style={btn("var(--danger)")} onClick={()=>openModal("txnOut")}>📤 Stock Out</button>}
             </SectionBar>
             <Card style={{overflow:"auto"}}>
               <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
@@ -797,19 +846,19 @@ const save = useCallback(async (key, val) => {
                     const m=mats.find(x=>x.id===tx.materialId);
                     const u=users.find(x=>x.id===tx.userId);
                     return(
-                      <tr key={tx.id} style={{background:i%2===0?"#f8fafc":"#fff"}}>
+                      <tr key={tx.id} style={{background:i%2===0?"var(--panel-2)":"var(--panel)"}}>
                         <Td c={tx.id} color="#6366f1" style={{fontSize:11}}/>
-                        <Td c={tx.date} color="#64748b"/>
+                        <Td c={tx.date} color="var(--text-muted)"/>
                         <Td c={m?.name||tx.materialId} bold/>
-                        <td style={{padding:"9px 13px"}}><Badge label={tx.type} color={tx.type==="IN"?"#065f46":"#991b1b"} bg={tx.type==="IN"?"#d1fae5":"#fee2e2"}/></td>
+                        <td style={{padding:"9px 13px"}}><Badge label={tx.type} color={tx.type==="IN"?"var(--success)":"var(--danger)"} bg={tx.type==="IN"?"#d1fae5":"var(--danger-bg)"}/></td>
                         <Td c={`${fmtN(tx.qty)} ${m?.unit||""}`} right bold/>
                         {data("viewCosts")&&<>
                           <Td c={fmtC(m?.unitCost||0)} right/>
                           <td style={{padding:"9px 13px",textAlign:"right",fontWeight:700,color:tx.type==="IN"?"#10b981":"#f43f5e",fontSize:12}}>{fmtC((m?.unitCost||0)*tx.qty)}</td>
                         </>}
-                        <Td c={tx.ref} color="#64748b"/>
-                        <td style={{padding:"9px 13px"}}><Badge label={tx.source||"manual"} color={tx.source==="po"?"#3b82f6":tx.source==="run"?"#8b5cf6":"#64748b"} bg={tx.source==="po"?"#eff6ff":tx.source==="run"?"#f5f3ff":"#f1f5f9"}/></td>
-                        <td style={{padding:"9px 13px"}}><span style={{background:ROLE_COLORS[u?.role]+"18",color:ROLE_COLORS[u?.role]||"#94a3b8",borderRadius:6,padding:"2px 8px",fontSize:11,fontWeight:700}}>{u?.name||"—"}</span></td>
+                        <Td c={tx.ref} color="var(--text-muted)"/>
+                        <td style={{padding:"9px 13px"}}><Badge label={tx.source||"manual"} color={tx.source==="po"?"#3b82f6":tx.source==="run"?"#8b5cf6":"var(--text-muted)"} bg={tx.source==="po"?"#eff6ff":tx.source==="run"?"#f5f3ff":"var(--panel-2)"}/></td>
+                        <td style={{padding:"9px 13px"}}><span style={{background:ROLE_COLORS[u?.role]+"18",color:ROLE_COLORS[u?.role]||"var(--text-muted)",borderRadius:6,padding:"2px 8px",fontSize:11,fontWeight:700}}>{u?.name||"—"}</span></td>
                       </tr>
                     );
                   })}
@@ -824,8 +873,8 @@ const save = useCallback(async (key, val) => {
         {tab==="Purchase Orders"&&(
           <div>
             <SectionBar title="Purchase Orders">
-              {["All","Pending","Received","Closed"].map(f=><button key={f} style={{...btn(poFilter===f?"#0f172a":"#e2e8f0",poFilter===f?"#fff":"#374151")}} onClick={()=>setPoFilter(f)}>{f}</button>)}
-              {can("createPO")&&<button style={btn("#6366f1")} onClick={()=>openModal("addPO")}>＋ Create PO</button>}
+              {["All","Pending","Received","Closed"].map(f=><button key={f} style={{...btn(poFilter===f?"#0f172a":"var(--border)",poFilter===f?"#fff":"#374151")}} onClick={()=>setPoFilter(f)}>{f}</button>)}
+              {can("createPO")&&<button style={btn("var(--accent)")} onClick={()=>openModal("addPO")}>＋ Create PO</button>}
             </SectionBar>
             <Card style={{overflow:"auto"}}>
               <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
@@ -838,23 +887,23 @@ const save = useCallback(async (key, val) => {
                   {pos.filter(p=>poFilter==="All"||p.status===poFilter).map((po,i)=>{
                     const mat=mats.find(m=>m.id===po.materialId);
                     const sup=sups.find(s=>s.id===po.supplierId);
-                    const c=PO_COLORS[po.status]||"#94a3b8";
+                    const c=PO_COLORS[po.status]||"var(--text-muted)";
                     return(
-                      <tr key={po.id} style={{background:i%2===0?"#f8fafc":"#fff"}}>
+                      <tr key={po.id} style={{background:i%2===0?"var(--panel-2)":"var(--panel)"}}>
                         <Td c={po.id} color="#6366f1" bold style={{fontSize:11}}/>
-                        <Td c={po.date} color="#64748b"/>
+                        <Td c={po.date} color="var(--text-muted)"/>
                         <Td c={sup?.name||po.supplierId}/>
                         <Td c={mat?.name||po.materialId} bold/>
                         <Td c={`${fmtN(po.qty)} ${mat?.unit||""}`} right bold/>
                         {data("viewCosts")&&<Td c={fmtC(po.qty*po.unitCost)} right bold color="#6366f1"/>}
-                        <Td c={po.expectedDate} color="#64748b"/>
+                        <Td c={po.expectedDate} color="var(--text-muted)"/>
                         <td style={{padding:"9px 13px"}}><Badge label={po.status} color={c} bg={c+"18"}/></td>
                         <td style={{padding:"9px 13px"}}>
                           <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
-                            {can("editPO")&&po.status==="Pending"&&<button style={{...btn("#e0f2fe","#0369a1","4px 9px"),fontSize:11}} onClick={()=>openModal("editPO",po)}>Edit</button>}
-                            {can("receivePO")&&po.status==="Pending"&&<button style={{...btn("#d1fae5","#065f46","4px 9px"),fontSize:11}} onClick={()=>receivePO(po)}>✓ Receive</button>}
-                            {can("closePO")&&po.status==="Pending"&&<button style={{...btn("#fee2e2","#991b1b","4px 9px"),fontSize:11}} onClick={()=>closePO(po)}>Close</button>}
-                            {po.status!=="Pending"&&<span style={{fontSize:11,color:"#94a3b8"}}>{po.receivedDate||po.status}</span>}
+                            {can("editPO")&&po.status==="Pending"&&<button style={{...btn("var(--accent-soft)","var(--accent)","4px 9px"),fontSize:11}} onClick={()=>openModal("editPO",po)}>Edit</button>}
+                            {can("receivePO")&&po.status==="Pending"&&<button style={{...btn("var(--success-bg)","var(--success)","4px 9px"),fontSize:11}} onClick={()=>receivePO(po)}>✓ Receive</button>}
+                            {can("closePO")&&po.status==="Pending"&&<button style={{...btn("var(--danger-bg)","var(--danger)","4px 9px"),fontSize:11}} onClick={()=>closePO(po)}>Close</button>}
+                            {po.status!=="Pending"&&<span style={{fontSize:11,color:"var(--text-muted)"}}>{po.receivedDate||po.status}</span>}
                           </div>
                         </td>
                       </tr>
@@ -871,26 +920,26 @@ const save = useCallback(async (key, val) => {
         {tab==="Production Runs"&&(
           <div>
             <SectionBar title="Production Runs">
-              {["All","Planned","In Progress","Completed"].map(f=><button key={f} style={{...btn(runFilter===f?"#0f172a":"#e2e8f0",runFilter===f?"#fff":"#374151")}} onClick={()=>setRunFilter(f)}>{f}</button>)}
-              {can("createRun")&&<button style={btn("#8b5cf6")} onClick={()=>openModal("addRun")}>＋ New Run</button>}
+              {["All","Planned","In Progress","Completed"].map(f=><button key={f} style={{...btn(runFilter===f?"#0f172a":"var(--border)",runFilter===f?"#fff":"#374151")}} onClick={()=>setRunFilter(f)}>{f}</button>)}
+              {can("createRun")&&<button style={btn("var(--accent)")} onClick={()=>openModal("addRun")}>＋ New Run</button>}
             </SectionBar>
             <div style={{display:"grid",gap:14}}>
               {runs.filter(r=>runFilter==="All"||r.status===runFilter).map(run=>{
-                const c=RUN_COLORS[run.status]||"#94a3b8";
+                const c=RUN_COLORS[run.status]||"var(--text-muted)";
                 const u=users.find(x=>x.id===run.userId);
                 return(
                   <Card key={run.id} style={{padding:18}}>
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12,flexWrap:"wrap",gap:8}}>
                       <div>
-                        <div style={{fontWeight:800,fontSize:15,color:"#0f172a"}}>{run.name}</div>
-                        <div style={{fontSize:12,color:"#64748b",marginTop:2}}>{run.date} · {run.ref} · <span style={{color:ROLE_COLORS[u?.role]||"#94a3b8"}}>{u?.name||"—"}</span></div>
-                        {run.notes&&<div style={{fontSize:11,color:"#94a3b8",marginTop:2}}>{run.notes}</div>}
+                        <div style={{fontWeight:800,fontSize:15,color:"var(--text)"}}>{run.name}</div>
+                        <div style={{fontSize:12,color:"var(--text-muted)",marginTop:2}}>{run.date} · {run.ref} · <span style={{color:ROLE_COLORS[u?.role]||"var(--text-muted)"}}>{u?.name||"—"}</span></div>
+                        {run.notes&&<div style={{fontSize:11,color:"var(--text-muted)",marginTop:2}}>{run.notes}</div>}
                       </div>
                       <div style={{display:"flex",gap:8,alignItems:"center"}}>
                         <Badge label={run.status} color={c} bg={c+"18"}/>
-                        {can("createRun")&&run.status!=="Completed"&&<button style={{...btn("#e0f2fe","#0369a1","5px 11px"),fontSize:11}} onClick={()=>openModal("editRun",run)}>Edit</button>}
-                        {can("completeRun")&&run.status!=="Completed"&&<button style={{...btn("#d1fae5","#065f46","5px 11px"),fontSize:11}} onClick={()=>completeRun(run)}>✓ Complete</button>}
-                        {can("delRun")&&run.status!=="Completed"&&<button style={{...btn("#fee2e2","#991b1b","5px 11px"),fontSize:11}} onClick={()=>deleteRun(run.id)}>Del</button>}
+                        {can("createRun")&&run.status!=="Completed"&&<button style={{...btn("var(--accent-soft)","var(--accent)","5px 11px"),fontSize:11}} onClick={()=>openModal("editRun",run)}>Edit</button>}
+                        {can("completeRun")&&run.status!=="Completed"&&<button style={{...btn("var(--success-bg)","var(--success)","5px 11px"),fontSize:11}} onClick={()=>completeRun(run)}>✓ Complete</button>}
+                        {can("delRun")&&run.status!=="Completed"&&<button style={{...btn("var(--danger-bg)","var(--danger)","5px 11px"),fontSize:11}} onClick={()=>deleteRun(run.id)}>Del</button>}
                       </div>
                     </div>
                     <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
@@ -898,9 +947,9 @@ const save = useCallback(async (key, val) => {
                         const m=mats.find(x=>x.id===item.materialId);
                         const sufficient=m&&m.stock>=item.qty;
                         return(
-                          <div key={idx} style={{background:run.status==="Completed"?"#f0fdf4":sufficient?"#f8fafc":"#fef2f2",border:`1px solid ${run.status==="Completed"?"#bbf7d0":sufficient?"#e2e8f0":"#fecaca"}`,borderRadius:8,padding:"6px 12px",fontSize:12}}>
+                          <div key={idx} style={{background:run.status==="Completed"?"var(--success-bg)":sufficient?"var(--panel-2)":"var(--danger-bg)",border:`1px solid ${run.status==="Completed"?"var(--success)":sufficient?"var(--border)":"var(--danger)"}`,borderRadius:8,padding:"6px 12px",fontSize:12}}>
                             <span style={{fontWeight:700}}>{m?.name||item.materialId}</span>
-                            <span style={{color:"#64748b",marginLeft:6}}>{fmtN(item.qty)} {m?.unit}</span>
+                            <span style={{color:"var(--text-muted)",marginLeft:6}}>{fmtN(item.qty)} {m?.unit}</span>
                             {run.status!=="Completed"&&!sufficient&&<span style={{color:"#ef4444",marginLeft:4,fontWeight:700}}>⚠ low</span>}
                           </div>
                         );
@@ -918,7 +967,7 @@ const save = useCallback(async (key, val) => {
         {tab==="Suppliers"&&(
           <div>
             <SectionBar title="Suppliers">
-              {can("addSup")&&<button style={btn("#6366f1")} onClick={()=>openModal("addSup")}>＋ Add Supplier</button>}
+              {can("addSup")&&<button style={btn("var(--accent)")} onClick={()=>openModal("addSup")}>＋ Add Supplier</button>}
             </SectionBar>
             <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(290px,1fr))",gap:14}}>
               {sups.map(s=>(
@@ -926,26 +975,26 @@ const save = useCallback(async (key, val) => {
                   <div style={{display:"flex",alignItems:"flex-start",gap:12,marginBottom:12}}>
                     <div style={{width:40,height:40,background:"#eff6ff",borderRadius:9,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}}>🏢</div>
                     <div style={{flex:1}}>
-                      <div style={{fontWeight:800,fontSize:14,color:"#0f172a"}}>{s.name}</div>
-                      <div style={{fontSize:11,color:"#94a3b8"}}>{s.id}</div>
+                      <div style={{fontWeight:800,fontSize:14,color:"var(--text)"}}>{s.name}</div>
+                      <div style={{fontSize:11,color:"var(--text-muted)"}}>{s.id}</div>
                     </div>
-                    <Badge label={s.status} color={s.status==="Active"?"#065f46":"#991b1b"} bg={s.status==="Active"?"#d1fae5":"#fee2e2"}/>
+                    <Badge label={s.status} color={s.status==="Active"?"var(--success)":"var(--danger)"} bg={s.status==="Active"?"#d1fae5":"var(--danger-bg)"}/>
                   </div>
                   <div style={{fontSize:12,display:"grid",gap:5,marginBottom:12}}>
                     {data("viewContacts")?(
                       <>
-                        <div><span style={{color:"#94a3b8"}}>Contact: </span><b>{s.contact}</b></div>
-                        <div><span style={{color:"#94a3b8"}}>Email: </span><a href={`mailto:${s.email}`} style={{color:"#3b82f6",textDecoration:"none"}}>{s.email}</a></div>
-                        <div><span style={{color:"#94a3b8"}}>Phone: </span>{s.phone}</div>
+                        <div><span style={{color:"var(--text-muted)"}}>Contact: </span><b>{s.contact}</b></div>
+                        <div><span style={{color:"var(--text-muted)"}}>Email: </span><a href={`mailto:${s.email}`} style={{color:"#3b82f6",textDecoration:"none"}}>{s.email}</a></div>
+                        <div><span style={{color:"var(--text-muted)"}}>Phone: </span>{s.phone}</div>
                       </>
-                    ):<div style={{color:"#94a3b8",fontStyle:"italic",fontSize:11}}>🔒 Contact details restricted</div>}
-                    <div><span style={{color:"#94a3b8"}}>Lead Time: </span><b style={{color:"#6366f1"}}>{s.lead} days</b></div>
-                    <div><span style={{color:"#94a3b8"}}>Materials: </span><span style={{color:"#374151"}}>{s.materials}</span></div>
+                    ):<div style={{color:"var(--text-muted)",fontStyle:"italic",fontSize:11}}>🔒 Contact details restricted</div>}
+                    <div><span style={{color:"var(--text-muted)"}}>Lead Time: </span><b style={{color:"#6366f1"}}>{s.lead} days</b></div>
+                    <div><span style={{color:"var(--text-muted)"}}>Materials: </span><span style={{color:"#374151"}}>{s.materials}</span></div>
                   </div>
                   {(can("editSup")||can("delSup"))&&(
                     <div style={{display:"flex",gap:8}}>
-                      {can("editSup")&&<button style={{...btn("#e0f2fe","#0369a1"),flex:1}} onClick={()=>openModal("editSup",s)}>Edit</button>}
-                      {can("delSup")&&<button style={{...btn("#fee2e2","#991b1b"),flex:1}} onClick={()=>deleteSup(s.id)}>Delete</button>}
+                      {can("editSup")&&<button style={{...btn("var(--accent-soft)","var(--accent)"),flex:1}} onClick={()=>openModal("editSup",s)}>Edit</button>}
+                      {can("delSup")&&<button style={{...btn("var(--danger-bg)","var(--danger)"),flex:1}} onClick={()=>deleteSup(s.id)}>Delete</button>}
                     </div>
                   )}
                 </Card>
@@ -957,23 +1006,23 @@ const save = useCallback(async (key, val) => {
         {/* ══ COST & ANALYTICS ══════════════════════════════════════════════ */}
         {tab==="Cost & Analytics"&&(
           <div>
-            <h2 style={{margin:"0 0 16px",fontSize:20,fontWeight:800,color:"#0f172a"}}>💰 Cost & Analytics</h2>
+            <h2 style={{margin:"0 0 16px",fontSize:20,fontWeight:800,color:"var(--text)"}}>💰 Cost & Analytics</h2>
 
             {/* 4 Metric Cards */}
             <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",gap:14,marginBottom:20}}>
               {[
-                {label:"Total Inventory Value",val:fmtC(stockVal),icon:"💎",color:"#6366f1",bg:"linear-gradient(135deg,#eef2ff,#e0e7ff)",border:"#6366f133",change:null},
-                {label:"Today's Stock In",val:fmtC(todayCostIn),icon:"📥",color:"#10b981",bg:"linear-gradient(135deg,#f0fdf4,#dcfce7)",border:"#10b98133",change:todayCostIn>0?"+":null},
-                {label:"Today's Stock Out",val:fmtC(todayCostOut),icon:"📤",color:"#f43f5e",bg:"linear-gradient(135deg,#fff1f2,#ffe4e6)",border:"#f43f5e33",change:todayCostOut>0?"-":null},
-                {label:"Total Cost In (All Time)",val:fmtC(totalCostIn),icon:"📈",color:"#3b82f6",bg:"linear-gradient(135deg,#eff6ff,#dbeafe)",border:"#3b82f633",change:null},
+                {label:"Total Inventory Value",val:fmtC(stockVal),icon:"💎",color:"#6366f1",bg:"var(--panel)",border:"#6366f133",change:null},
+                {label:"Today's Stock In",val:fmtC(todayCostIn),icon:"📥",color:"#10b981",bg:"var(--panel)",border:"#10b98133",change:todayCostIn>0?"+":null},
+                {label:"Today's Stock Out",val:fmtC(todayCostOut),icon:"📤",color:"#f43f5e",bg:"var(--panel)",border:"#f43f5e33",change:todayCostOut>0?"-":null},
+                {label:"Total Cost In (All Time)",val:fmtC(totalCostIn),icon:"📈",color:"#3b82f6",bg:"var(--panel)",border:"#3b82f633",change:null},
               ].map(({label,val,icon,color,bg,border,change})=>(
                 <div key={label} style={{background:bg,borderRadius:16,padding:"22px 24px",border:`1px solid ${border}`,boxShadow:"0 2px 8px rgba(0,0,0,0.06)"}}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
                     <div style={{fontSize:28}}>{icon}</div>
-                    {change&&<span style={{background:change==="+"?"#dcfce7":"#ffe4e6",color:change==="+"?"#16a34a":"#dc2626",borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:700}}>{change} Today</span>}
+                    {change&&<span style={{background:change==="+"?"var(--success-bg)":"#ffe4e6",color:change==="+"?"#16a34a":"#dc2626",borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:700}}>{change} Today</span>}
                   </div>
                   <div style={{fontSize:22,fontWeight:900,color,marginBottom:4}}>{val}</div>
-                  <div style={{fontSize:12,color:"#64748b"}}>{label}</div>
+                  <div style={{fontSize:12,color:"var(--text-muted)"}}>{label}</div>
                 </div>
               ))}
             </div>
@@ -981,7 +1030,7 @@ const save = useCallback(async (key, val) => {
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:20}}>
               {/* Donut Chart — Category Breakdown */}
               <Card style={{padding:20}}>
-                <div style={{fontWeight:700,fontSize:14,color:"#0f172a",marginBottom:16}}>🍩 Value by Category</div>
+                <div style={{fontWeight:700,fontSize:14,color:"var(--text)",marginBottom:16}}>🍩 Value by Category</div>
                 {categoryData.length>0?(
                   <div style={{display:"flex",alignItems:"center",gap:20}}>
                     <ResponsiveContainer width={160} height={160}>
@@ -999,7 +1048,7 @@ const save = useCallback(async (key, val) => {
                         <div key={c.name} style={{display:"flex",alignItems:"center",gap:8,fontSize:12}}>
                           <div style={{width:10,height:10,borderRadius:"50%",background:["#6366f1","#3b82f6","#10b981","#f59e0b","#f43f5e","#8b5cf6","#06b6d4"][i%7],flexShrink:0}}/>
                           <span style={{flex:1,color:"#374151"}}>{c.name}</span>
-                          <span style={{fontWeight:700,color:"#0f172a"}}>{fmtC(c.value)}</span>
+                          <span style={{fontWeight:700,color:"var(--text)"}}>{fmtC(c.value)}</span>
                         </div>
                       ))}
                     </div>
@@ -1009,7 +1058,7 @@ const save = useCallback(async (key, val) => {
 
               {/* Top 5 Most Valuable Materials */}
               <Card style={{padding:20}}>
-                <div style={{fontWeight:700,fontSize:14,color:"#0f172a",marginBottom:16}}>🏆 Top 5 Most Valuable Stock</div>
+                <div style={{fontWeight:700,fontSize:14,color:"var(--text)",marginBottom:16}}>🏆 Top 5 Most Valuable Stock</div>
                 <div style={{display:"grid",gap:10}}>
                   {top5Mats.map((m,i)=>{
                     const val = m.stock*m.unitCost;
@@ -1018,10 +1067,10 @@ const save = useCallback(async (key, val) => {
                     return(
                       <div key={m.id}>
                         <div style={{display:"flex",justifyContent:"space-between",fontSize:12,marginBottom:3}}>
-                          <span style={{fontWeight:700,color:"#0f172a"}}>{i+1}. {m.name}</span>
+                          <span style={{fontWeight:700,color:"var(--text)"}}>{i+1}. {m.name}</span>
                           <span style={{fontWeight:700,color:"#6366f1"}}>{fmtC(val)}</span>
                         </div>
-                        <div style={{height:6,background:"#f1f5f9",borderRadius:3,overflow:"hidden"}}>
+                        <div style={{height:6,background:"var(--panel-2)",borderRadius:3,overflow:"hidden"}}>
                           <div style={{height:"100%",width:`${pct}%`,background:"linear-gradient(90deg,#6366f1,#38bdf8)",borderRadius:3,transition:"width 0.6s"}}/>
                         </div>
                       </div>
@@ -1033,7 +1082,7 @@ const save = useCallback(async (key, val) => {
 
             {/* 30-Day Inventory Value Trend */}
             <Card style={{padding:20,marginBottom:20}}>
-              <div style={{fontWeight:700,fontSize:14,color:"#0f172a",marginBottom:16}}>📈 30-Day Inventory Value Trend</div>
+              <div style={{fontWeight:700,fontSize:14,color:"var(--text)",marginBottom:16}}>📈 30-Day Inventory Value Trend</div>
               <ResponsiveContainer width="100%" height={220}>
                 <AreaChart data={trendData} margin={{top:5,right:10,left:10,bottom:0}}>
                   <defs>
@@ -1042,9 +1091,9 @@ const save = useCallback(async (key, val) => {
                       <stop offset="95%" stopColor="#6366f1" stopOpacity={0}/>
                     </linearGradient>
                   </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9"/>
-                  <XAxis dataKey="label" tick={{fontSize:10}} stroke="#94a3b8" interval={4}/>
-                  <YAxis tick={{fontSize:10}} stroke="#94a3b8" tickFormatter={v=>`₹${(v/1000).toFixed(0)}k`}/>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--panel-2)"/>
+                  <XAxis dataKey="label" tick={{fontSize:10}} stroke="var(--text-muted)" interval={4}/>
+                  <YAxis tick={{fontSize:10}} stroke="var(--text-muted)" tickFormatter={v=>`₹${(v/1000).toFixed(0)}k`}/>
                   <Tooltip formatter={v=>[fmtC(v),"Stock Value"]} labelStyle={{fontWeight:700}}/>
                   <Area type="monotone" dataKey="stockValue" stroke="#6366f1" strokeWidth={2} fill="url(#stockGrad)"/>
                 </AreaChart>
@@ -1054,8 +1103,8 @@ const save = useCallback(async (key, val) => {
             {/* Material Cost Breakdown Table */}
             <Card style={{overflow:"auto"}}>
               <div style={{padding:"12px 16px",borderBottom:"1px solid #f1f5f9",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                <span style={{fontWeight:700,fontSize:14,color:"#0f172a"}}>Material Cost Breakdown</span>
-                {can("exportData")&&<button style={{...btn("#475569","#fff","5px 12px"),fontSize:11}} onClick={exportInventoryCSV}>⬇ Export CSV</button>}
+                <span style={{fontWeight:700,fontSize:14,color:"var(--text)"}}>Material Cost Breakdown</span>
+                {can("exportData")&&<button style={{...btn("var(--text-secondary)","#fff","5px 12px"),fontSize:11}} onClick={exportInventoryCSV}>⬇ Export CSV</button>}
               </div>
               <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
                 <thead><tr>
@@ -1067,9 +1116,9 @@ const save = useCallback(async (key, val) => {
                     const tOut=txns.filter(t=>t.materialId===m.id&&t.type==="OUT").reduce((s,t)=>s+t.qty,0);
                     const net=tIn*m.unitCost-tOut*m.unitCost;
                     return(
-                      <tr key={m.id} style={{background:i%2===0?"#f8fafc":"#fff"}}>
+                      <tr key={m.id} style={{background:i%2===0?"var(--panel-2)":"var(--panel)"}}>
                         <Td c={m.name} bold/>
-                        <Td c={m.category} color="#64748b"/>
+                        <Td c={m.category} color="var(--text-muted)"/>
                         <Td c={fmtC(m.unitCost)} right/>
                         <Td c={`${fmtN(m.stock)} ${m.unit}`} right bold/>
                         <Td c={fmtC(m.stock*m.unitCost)} right bold color="#6366f1"/>
@@ -1088,16 +1137,16 @@ const save = useCallback(async (key, val) => {
         {/* ══ FORECASTING ══════════════════════════════════════════════════ */}
         {tab==="Forecasting"&&(
           <div>
-            <h2 style={{margin:"0 0 6px",fontSize:20,fontWeight:800,color:"#0f172a"}}>🔮 Demand Forecasting</h2>
-            <p style={{margin:"0 0 20px",fontSize:13,color:"#64748b"}}>Based on your last 30 days of stock-out history. Predictions update automatically as you add transactions.</p>
+            <h2 style={{margin:"0 0 6px",fontSize:20,fontWeight:800,color:"var(--text)"}}>🔮 Demand Forecasting</h2>
+            <p style={{margin:"0 0 20px",fontSize:13,color:"var(--text-muted)"}}>Based on your last 30 days of stock-out history. Predictions update automatically as you add transactions.</p>
 
             {/* Summary Alert Bands */}
             {["critical","warning","watch"].map(level=>{
               const items = forecasts.filter(f=>f.forecast.urgency===level);
               if (!items.length) return null;
               const cfg = {
-                critical:{bg:"#fef2f2",border:"#fca5a5",color:"#991b1b",label:"🚨 Critical — Runs out within 7 days"},
-                warning: {bg:"#fffbeb",border:"#fcd34d",color:"#92400e",label:"⚠️ Warning — Runs out within 14 days"},
+                critical:{bg:"var(--danger-bg)",border:"var(--danger)",color:"var(--danger)",label:"🚨 Critical — Runs out within 7 days"},
+                warning: {bg:"var(--warning-bg)",border:"#fcd34d",color:"#92400e",label:"⚠️ Warning — Runs out within 14 days"},
                 watch:   {bg:"#eff6ff",border:"#93c5fd",color:"#1e40af",label:"👀 Watch — Runs out within 30 days"},
               }[level];
               return(
@@ -1105,9 +1154,9 @@ const save = useCallback(async (key, val) => {
                   <div style={{fontWeight:700,fontSize:13,color:cfg.color,marginBottom:8}}>{cfg.label}</div>
                   <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
                     {items.map(m=>(
-                      <div key={m.id} style={{background:"#fff",borderRadius:8,padding:"6px 12px",border:`1px solid ${cfg.border}`,fontSize:12}}>
+                      <div key={m.id} style={{background:"var(--panel)",borderRadius:8,padding:"6px 12px",border:`1px solid ${cfg.border}`,fontSize:12}}>
                         <span style={{fontWeight:700}}>{m.name}</span>
-                        <span style={{color:"#64748b",marginLeft:6}}>{m.forecast.daysLeft} days left</span>
+                        <span style={{color:"var(--text-muted)",marginLeft:6}}>{m.forecast.daysLeft} days left</span>
                       </div>
                     ))}
                   </div>
@@ -1131,20 +1180,20 @@ const save = useCallback(async (key, val) => {
                   {forecasts.map((m,i)=>{
                     const f = m.forecast;
                     const urgCfg = {
-                      critical:{color:"#ef4444",bg:"#fef2f2",label:"🚨 Critical"},
-                      warning: {color:"#f59e0b",bg:"#fffbeb",label:"⚠️ Warning"},
+                      critical:{color:"#ef4444",bg:"var(--danger-bg)",label:"🚨 Critical"},
+                      warning: {color:"#f59e0b",bg:"var(--warning-bg)",label:"⚠️ Warning"},
                       watch:   {color:"#3b82f6",bg:"#eff6ff",label:"👀 Watch"},
-                      ok:      {color:"#10b981",bg:"#f0fdf4",label:"✅ OK"},
-                      "no-data":{color:"#94a3b8",bg:"#f8fafc",label:"— No data"},
+                      ok:      {color:"#10b981",bg:"var(--success-bg)",label:"✅ OK"},
+                      "no-data":{color:"var(--text-muted)",bg:"var(--panel-2)",label:"— No data"},
                     }[f.urgency];
                     return(
-                      <tr key={m.id} style={{background:i%2===0?"#f8fafc":"#fff"}}>
+                      <tr key={m.id} style={{background:i%2===0?"var(--panel-2)":"var(--panel)"}}>
                         <td style={{padding:"10px 13px"}}>
                           <div style={{fontWeight:700,fontSize:12}}>{m.name}</div>
-                          <div style={{fontSize:11,color:"#94a3b8"}}>{m.id} · {m.unit}</div>
+                          <div style={{fontSize:11,color:"var(--text-muted)"}}>{m.id} · {m.unit}</div>
                         </td>
                         <Td c={`${fmtN(m.stock)} ${m.unit}`} right bold/>
-                        <Td c={f.avgDailyUsage>0?`${f.avgDailyUsage} ${m.unit}/day`:"—"} right color="#64748b"/>
+                        <Td c={f.avgDailyUsage>0?`${f.avgDailyUsage} ${m.unit}/day`:"—"} right color="var(--text-muted)"/>
                         <Td c={f.daysLeft!==null?`${f.daysLeft} days`:"—"} right bold color={urgCfg.color}/>
                         <Td c={f.reorderDate||"—"} right color="#374151"/>
                         <Td c={f.reorderQty?`${f.reorderQty} ${m.unit}`:"—"} right bold color="#6366f1"/>
@@ -1165,8 +1214,8 @@ const save = useCallback(async (key, val) => {
         {tab==="Audit Log"&&(
           <div>
             <SectionBar title="Audit Log">
-              <span style={{fontSize:12,color:"#94a3b8",fontWeight:400,alignSelf:"center"}}>Complete history of all actions</span>
-              {can("exportData")&&<button style={btn("#475569")} onClick={()=>{ const csv=toCSV(audit,[{label:"ID",key:"id"},{label:"Timestamp",key:"ts"},{label:"User",key:"userName"},{label:"Role",key:"userRole"},{label:"Action",key:"action"},{label:"Entity",key:"entity"},{label:"Details",key:"details"}]); downloadFile(csv,`audit_${today()}.csv`); toast$("Audit log exported ✓"); }}>⬇ Export</button>}
+              <span style={{fontSize:12,color:"var(--text-muted)",fontWeight:400,alignSelf:"center"}}>Complete history of all actions</span>
+              {can("exportData")&&<button style={btn("var(--text-secondary)")} onClick={()=>{ const csv=toCSV(audit,[{label:"ID",key:"id"},{label:"Timestamp",key:"ts"},{label:"User",key:"userName"},{label:"Role",key:"userRole"},{label:"Action",key:"action"},{label:"Entity",key:"entity"},{label:"Details",key:"details"}]); downloadFile(csv,`audit_${today()}.csv`); toast$("Audit log exported ✓"); }}>⬇ Export</button>}
             </SectionBar>
             <Card style={{overflow:"auto"}}>
               <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
@@ -1175,16 +1224,16 @@ const save = useCallback(async (key, val) => {
                 </tr></thead>
                 <tbody>
                   {[...audit].sort((a,b)=>b.ts.localeCompare(a.ts)).map((entry,i)=>(
-                    <tr key={entry.id} style={{background:i%2===0?"#f8fafc":"#fff"}}>
-                      <Td c={fmtTs(entry.ts)} color="#64748b" style={{fontSize:11,whiteSpace:"nowrap"}}/>
+                    <tr key={entry.id} style={{background:i%2===0?"var(--panel-2)":"var(--panel)"}}>
+                      <Td c={fmtTs(entry.ts)} color="var(--text-muted)" style={{fontSize:11,whiteSpace:"nowrap"}}/>
                       <td style={{padding:"9px 13px"}}>
                         <div style={{fontWeight:700,fontSize:12}}>{entry.userName}</div>
                         <RoleBadge role={entry.userRole||"Viewer"}/>
                       </td>
                       <td style={{padding:"9px 13px"}}>
-                        <span style={{background:"#f1f5f9",borderRadius:6,padding:"3px 8px",fontSize:11,fontWeight:700,color:"#374151",fontFamily:"monospace"}}>{entry.action}</span>
+                        <span style={{background:"var(--panel-2)",borderRadius:6,padding:"3px 8px",fontSize:11,fontWeight:700,color:"#374151",fontFamily:"monospace"}}>{entry.action}</span>
                       </td>
-                      <Td c={entry.entity} color="#64748b"/>
+                      <Td c={entry.entity} color="var(--text-muted)"/>
                       <Td c={entry.details}/>
                     </tr>
                   ))}
@@ -1198,16 +1247,16 @@ const save = useCallback(async (key, val) => {
         {/* ══ ADMIN ════════════════════════════════════════════════════════ */}
         {tab==="Admin"&&(
           <div>
-            <h2 style={{margin:"0 0 20px",fontSize:20,fontWeight:800,color:"#0f172a"}}>⚙ Admin Panel</h2>
+            <h2 style={{margin:"0 0 20px",fontSize:20,fontWeight:800,color:"var(--text)"}}>⚙ Admin Panel</h2>
 
             {/* User Management */}
             <Card style={{marginBottom:20}}>
               <div style={{padding:"12px 18px",borderBottom:"1px solid #f1f5f9",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                <span style={{fontWeight:800,fontSize:14,color:"#0f172a"}}>👥 User Management</span>
-                <button style={btn("#6366f1")} onClick={()=>openModal("addUser")}>＋ Add User</button>
+                <span style={{fontWeight:800,fontSize:14,color:"var(--text)"}}>👥 User Management</span>
+                <button style={btn("var(--accent)")} onClick={()=>openModal("addUser")}>＋ Add User</button>
               </div>
               <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
-                <thead><tr style={{background:"#f8fafc"}}>
+                <thead><tr style={{background:"var(--panel-2)"}}>
                   <th style={{padding:"10px 13px",textAlign:"left",fontWeight:700,fontSize:12}}>Name</th>
                   <th style={{padding:"10px 13px",textAlign:"left",fontWeight:700,fontSize:12}}>Username</th>
                   <th style={{padding:"10px 13px",textAlign:"left",fontWeight:700,fontSize:12}}>Role</th>
@@ -1215,14 +1264,14 @@ const save = useCallback(async (key, val) => {
                 </tr></thead>
                 <tbody>
                   {users.map((u,i)=>(
-                    <tr key={u.id} style={{background:i%2===0?"#fff":"#f8fafc"}}>
-                      <td style={{padding:"10px 13px",fontWeight:700,fontSize:12}}>{u.name} {u.id===session.user.id&&<span style={{fontSize:10,color:"#94a3b8"}}>(you)</span>}</td>
-                      <Td c={u.username} color="#64748b"/>
+                    <tr key={u.id} style={{background:i%2===0?"var(--panel)":"var(--panel-2)"}}>
+                      <td style={{padding:"10px 13px",fontWeight:700,fontSize:12}}>{u.name} {u.id===session.user.id&&<span style={{fontSize:10,color:"var(--text-muted)"}}>(you)</span>}</td>
+                      <Td c={u.username} color="var(--text-muted)"/>
                       <td style={{padding:"10px 13px"}}><RoleBadge role={u.role}/></td>
                       <td style={{padding:"10px 13px"}}>
                         <div style={{display:"flex",gap:6}}>
-                          <button style={{...btn("#e0f2fe","#0369a1","4px 10px"),fontSize:11}} onClick={()=>openModal("editUser",u)}>Edit</button>
-                          {u.id!==session.user.id&&<button style={{...btn("#fee2e2","#991b1b","4px 10px"),fontSize:11}} onClick={()=>deleteUser(u.id)}>Delete</button>}
+                          <button style={{...btn("var(--accent-soft)","var(--accent)","4px 10px"),fontSize:11}} onClick={()=>openModal("editUser",u)}>Edit</button>
+                          {u.id!==session.user.id&&<button style={{...btn("var(--danger-bg)","var(--danger)","4px 10px"),fontSize:11}} onClick={()=>deleteUser(u.id)}>Delete</button>}
                         </div>
                       </td>
                     </tr>
@@ -1232,7 +1281,7 @@ const save = useCallback(async (key, val) => {
             </Card>
 
             {/* Permissions */}
-            <div style={{fontWeight:800,fontSize:14,color:"#0f172a",marginBottom:12}}>🔐 Role Permissions</div>
+            <div style={{fontWeight:800,fontSize:14,color:"var(--text)",marginBottom:12}}>🔐 Role Permissions</div>
             <div style={{display:"grid",gap:14,marginBottom:20}}>
               {["Manager","Warehouse","Viewer"].map(role=>{
                 const rp=perms[role]??DEFAULT_PERMS[role];
@@ -1240,14 +1289,14 @@ const save = useCallback(async (key, val) => {
                   <Card key={role}>
                     <div style={{padding:"12px 18px",borderBottom:"1px solid #f1f5f9",display:"flex",alignItems:"center",gap:10}}>
                       <RoleBadge role={role}/>
-                      <span style={{fontSize:12,color:"#94a3b8"}}>Manage what this role can access</span>
+                      <span style={{fontSize:12,color:"var(--text-muted)"}}>Manage what this role can access</span>
                     </div>
                     <div style={{padding:"16px 18px",display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(250px,1fr))",gap:20}}>
                       <div>
                         <div style={{fontWeight:700,fontSize:12,color:"#374151",marginBottom:10,paddingBottom:6,borderBottom:"1px solid #f1f5f9"}}>📑 Visible Tabs</div>
                         {Object.entries(rp.tabs).filter(([k])=>k!=="admin").map(([key,val])=>(
                           <div key={key} style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
-                            <span style={{fontSize:12,color:"#475569",textTransform:"capitalize"}}>{key==="costs"?"Cost & Analytics":key==="purchaseOrders"?"Purchase Orders":key==="productionRuns"?"Production Runs":key==="auditLog"?"Audit Log":key}</span>
+                            <span style={{fontSize:12,color:"var(--text-secondary)",textTransform:"capitalize"}}>{key==="costs"?"Cost & Analytics":key==="purchaseOrders"?"Purchase Orders":key==="productionRuns"?"Production Runs":key==="auditLog"?"Audit Log":key}</span>
                             <Toggle on={val} onChange={()=>togglePerm(role,"tabs",key)}/>
                           </div>
                         ))}
@@ -1256,7 +1305,7 @@ const save = useCallback(async (key, val) => {
                         <div style={{fontWeight:700,fontSize:12,color:"#374151",marginBottom:10,paddingBottom:6,borderBottom:"1px solid #f1f5f9"}}>⚡ Actions Allowed</div>
                         {[["stockIn","Stock In"],["stockOut","Stock Out"],["addMat","Add Material"],["editMat","Edit Material"],["delMat","Delete Material"],["editThresh","Edit Threshold"],["createPO","Create PO"],["receivePO","Receive PO"],["createRun","Create Production Run"],["completeRun","Complete Run"],["exportData","Export CSV"]].map(([key,label])=>(
                           <div key={key} style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
-                            <span style={{fontSize:12,color:"#475569"}}>{label}</span>
+                            <span style={{fontSize:12,color:"var(--text-secondary)"}}>{label}</span>
                             <Toggle on={rp.actions[key]} onChange={()=>togglePerm(role,"actions",key)}/>
                           </div>
                         ))}
@@ -1265,7 +1314,7 @@ const save = useCallback(async (key, val) => {
                         <div style={{fontWeight:700,fontSize:12,color:"#374151",marginBottom:10,paddingBottom:6,borderBottom:"1px solid #f1f5f9"}}>🔒 Data Visibility</div>
                         {[["viewCosts","Unit Costs & Prices"],["viewContacts","Supplier Contacts"],["viewAllTxn","All Transactions (not just own)"],["viewAuditLog","Audit Log Access"]].map(([key,label])=>(
                           <div key={key} style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
-                            <span style={{fontSize:12,color:"#475569"}}>{label}</span>
+                            <span style={{fontSize:12,color:"var(--text-secondary)"}}>{label}</span>
                             <Toggle on={rp.data[key]} onChange={()=>togglePerm(role,"data",key)}/>
                           </div>
                         ))}
@@ -1279,14 +1328,14 @@ const save = useCallback(async (key, val) => {
             {/* Backup & Restore */}
             {can("backupRestore")&&(
               <Card style={{padding:20}}>
-                <div style={{fontWeight:800,fontSize:14,color:"#0f172a",marginBottom:4}}>💾 Backup & Restore</div>
-                <div style={{fontSize:12,color:"#64748b",marginBottom:16}}>Download a full backup of all data, or restore from a previous backup file.</div>
+                <div style={{fontWeight:800,fontSize:14,color:"var(--text)",marginBottom:4}}>💾 Backup & Restore</div>
+                <div style={{fontSize:12,color:"var(--text-muted)",marginBottom:16}}>Download a full backup of all data, or restore from a previous backup file.</div>
                 <div style={{display:"flex",gap:12,flexWrap:"wrap"}}>
-                  <button style={btn("#0f172a")} onClick={handleBackup}>⬇ Download Backup (.json)</button>
-                  <button style={btn("#f59e0b")} onClick={()=>restoreRef.current?.click()}>⬆ Restore from Backup</button>
+                  <button style={btn("var(--accent)")} onClick={handleBackup}>⬇ Download Backup (.json)</button>
+                  <button style={btn("var(--warning)")} onClick={()=>restoreRef.current?.click()}>⬆ Restore from Backup</button>
                   <input ref={restoreRef} type="file" accept=".json" style={{display:"none"}} onChange={handleRestore}/>
                 </div>
-                <div style={{marginTop:12,fontSize:11,color:"#94a3b8"}}>⚠ Restoring a backup will replace ALL current data. Make sure to download a backup first.</div>
+                <div style={{marginTop:12,fontSize:11,color:"var(--text-muted)"}}>⚠ Restoring a backup will replace ALL current data. Make sure to download a backup first.</div>
               </Card>
             )}
           </div>
@@ -1296,11 +1345,11 @@ const save = useCallback(async (key, val) => {
       {/* ══ MODALS ════════════════════════════════════════════════════════════ */}
       {modal&&(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:300,padding:16}} onClick={e=>e.target===e.currentTarget&&closeModal()}>
-          <div style={{background:"#fff",borderRadius:14,padding:26,width:"100%",maxWidth:480,boxShadow:"0 25px 60px rgba(0,0,0,0.3)",maxHeight:"92vh",overflowY:"auto"}}>
+          <div style={{background:"var(--panel)",borderRadius:14,padding:26,width:"100%",maxWidth:480,boxShadow:"0 25px 60px rgba(0,0,0,0.3)",maxHeight:"92vh",overflowY:"auto"}}>
 
             {/* Stock In/Out */}
             {(modal==="txnIn"||modal==="txnOut")&&<>
-              <div style={{fontWeight:800,fontSize:17,marginBottom:18,color:"#0f172a"}}>{modal==="txnIn"?"📥 Record Stock In":"📤 Record Stock Out"}</div>
+              <div style={{fontWeight:800,fontSize:17,marginBottom:18,color:"var(--text)"}}>{modal==="txnIn"?"📥 Record Stock In":"📤 Record Stock Out"}</div>
               <div style={{display:"grid",gap:12}}>
                 <div><Lbl c="Material *"/>
                   <select value={form.materialId||""} onChange={e=>fset("materialId",e.target.value)} style={inp}>
@@ -1310,19 +1359,19 @@ const save = useCallback(async (key, val) => {
                 </div>
                 <div><Lbl c="Quantity *"/>
                   <input type="number" min={1} placeholder="Enter quantity" value={form.qty||""} onChange={e=>fset("qty",e.target.value)} style={inp}/>
-                  {form.materialId&&<div style={{fontSize:11,color:"#94a3b8",marginTop:3}}>Current stock: {fmtN(mats.find(m=>m.id===form.materialId)?.stock)} {mats.find(m=>m.id===form.materialId)?.unit}</div>}
+                  {form.materialId&&<div style={{fontSize:11,color:"var(--text-muted)",marginTop:3}}>Current stock: {fmtN(mats.find(m=>m.id===form.materialId)?.stock)} {mats.find(m=>m.id===form.materialId)?.unit}</div>}
                 </div>
                 <div><Lbl c="Reference / PO Number"/><input placeholder="e.g. PO-003, Production note…" value={form.ref||""} onChange={e=>fset("ref",e.target.value)} style={inp}/></div>
                 <div style={{display:"flex",gap:10,marginTop:4}}>
                   <button style={{...btn(modal==="txnIn"?"#10b981":"#f43f5e"),flex:1}} onClick={()=>submitTxn(modal==="txnIn"?"in":"out")}>Confirm</button>
-                  <button style={btn("#f1f5f9","#374151")} onClick={closeModal}>Cancel</button>
+                  <button style={btn("var(--panel-2)","#374151")} onClick={closeModal}>Cancel</button>
                 </div>
               </div>
             </>}
 
             {/* Add/Edit Material */}
             {(modal==="addMat"||modal==="editMat")&&<>
-              <div style={{fontWeight:800,fontSize:17,marginBottom:18,color:"#0f172a"}}>{modal==="addMat"?"➕ Add Material":"✏️ Edit Material"}</div>
+              <div style={{fontWeight:800,fontSize:17,marginBottom:18,color:"var(--text)"}}>{modal==="addMat"?"➕ Add Material":"✏️ Edit Material"}</div>
               <div style={{display:"grid",gap:11}}>
                 <div><Lbl c="Material ID *"/><input placeholder="e.g. RM-009" value={form.id||""} onChange={e=>fset("id",e.target.value)} disabled={modal==="editMat"} style={{...inp,opacity:modal==="editMat"?0.6:1}}/></div>
                 <div><Lbl c="Material Name *"/><input placeholder="Name" value={form.name||""} onChange={e=>fset("name",e.target.value)} style={inp}/></div>
@@ -1345,27 +1394,27 @@ const save = useCallback(async (key, val) => {
                   <div><Lbl c="Unit Cost ($) *"/><input type="number" min={0} step={0.01} value={form.unitCost||""} onChange={e=>fset("unitCost",e.target.value)} style={inp}/></div>
                 </div>
                 <div style={{display:"flex",gap:10,marginTop:4}}>
-                  <button style={{...btn("#6366f1"),flex:1}} onClick={()=>submitMat(modal==="editMat")}>{modal==="addMat"?"Add Material":"Save Changes"}</button>
-                  <button style={btn("#f1f5f9","#374151")} onClick={closeModal}>Cancel</button>
+                  <button style={{...btn("var(--accent)"),flex:1}} onClick={()=>submitMat(modal==="editMat")}>{modal==="addMat"?"Add Material":"Save Changes"}</button>
+                  <button style={btn("var(--panel-2)","#374151")} onClick={closeModal}>Cancel</button>
                 </div>
               </div>
             </>}
 
             {/* Edit Threshold */}
             {modal==="editThreshold"&&<>
-              <div style={{fontWeight:800,fontSize:17,marginBottom:6,color:"#0f172a"}}>✏️ Edit Low Stock Threshold</div>
-              <div style={{fontSize:12,color:"#64748b",marginBottom:14}}>{target?.name}</div>
+              <div style={{fontWeight:800,fontSize:17,marginBottom:6,color:"var(--text)"}}>✏️ Edit Low Stock Threshold</div>
+              <div style={{fontSize:12,color:"var(--text-muted)",marginBottom:14}}>{target?.name}</div>
               <Lbl c={`Threshold (${target?.unit})`}/>
               <input type="number" min={0} value={form.threshold||""} onChange={e=>fset("threshold",e.target.value)} style={{...inp,marginBottom:14}}/>
               <div style={{display:"flex",gap:10}}>
-                <button style={{...btn("#f59e0b"),flex:1}} onClick={submitThreshold}>Update</button>
-                <button style={btn("#f1f5f9","#374151")} onClick={closeModal}>Cancel</button>
+                <button style={{...btn("var(--warning)"),flex:1}} onClick={submitThreshold}>Update</button>
+                <button style={btn("var(--panel-2)","#374151")} onClick={closeModal}>Cancel</button>
               </div>
             </>}
 
             {/* Add/Edit Supplier */}
             {(modal==="addSup"||modal==="editSup")&&<>
-              <div style={{fontWeight:800,fontSize:17,marginBottom:18,color:"#0f172a"}}>{modal==="addSup"?"➕ Add Supplier":"✏️ Edit Supplier"}</div>
+              <div style={{fontWeight:800,fontSize:17,marginBottom:18,color:"var(--text)"}}>{modal==="addSup"?"➕ Add Supplier":"✏️ Edit Supplier"}</div>
               <div style={{display:"grid",gap:11}}>
                 {[["id","Supplier ID *"],["name","Company Name *"],["contact","Contact Person *"],["email","Email *"],["phone","Phone"],["materials","Materials Supplied"]].map(([k,label])=>(
                   <div key={k}><Lbl c={label}/><input placeholder={label} value={form[k]||""} onChange={e=>fset(k,e.target.value)} style={inp}/></div>
@@ -1379,15 +1428,15 @@ const save = useCallback(async (key, val) => {
                   </div>
                 </div>
                 <div style={{display:"flex",gap:10,marginTop:4}}>
-                  <button style={{...btn("#6366f1"),flex:1}} onClick={()=>submitSup(modal==="editSup")}>{modal==="addSup"?"Add Supplier":"Save Changes"}</button>
-                  <button style={btn("#f1f5f9","#374151")} onClick={closeModal}>Cancel</button>
+                  <button style={{...btn("var(--accent)"),flex:1}} onClick={()=>submitSup(modal==="editSup")}>{modal==="addSup"?"Add Supplier":"Save Changes"}</button>
+                  <button style={btn("var(--panel-2)","#374151")} onClick={closeModal}>Cancel</button>
                 </div>
               </div>
             </>}
 
             {/* Add/Edit PO */}
             {(modal==="addPO"||modal==="editPO")&&<>
-              <div style={{fontWeight:800,fontSize:17,marginBottom:18,color:"#0f172a"}}>{modal==="addPO"?"🧾 Create Purchase Order":"✏️ Edit PO"}</div>
+              <div style={{fontWeight:800,fontSize:17,marginBottom:18,color:"var(--text)"}}>{modal==="addPO"?"🧾 Create Purchase Order":"✏️ Edit PO"}</div>
               <div style={{display:"grid",gap:11}}>
                 <div><Lbl c="PO ID *"/><input value={form.id||""} onChange={e=>fset("id",e.target.value)} style={inp}/></div>
                 <div><Lbl c="Supplier *"/>
@@ -1408,19 +1457,19 @@ const save = useCallback(async (key, val) => {
                 </div>
                 <div><Lbl c="Expected Delivery Date *"/><input type="date" value={form.expectedDate||""} onChange={e=>fset("expectedDate",e.target.value)} style={inp}/></div>
                 <div><Lbl c="Notes"/><input placeholder="Optional notes…" value={form.notes||""} onChange={e=>fset("notes",e.target.value)} style={inp}/></div>
-                {form.qty&&form.unitCost&&<div style={{background:"#f0fdf4",borderRadius:8,padding:"10px 14px",fontSize:12,color:"#065f46",fontWeight:700}}>
+                {form.qty&&form.unitCost&&<div style={{background:"var(--success-bg)",borderRadius:8,padding:"10px 14px",fontSize:12,color:"var(--success)",fontWeight:700}}>
                   PO Total: {fmtC(parseFloat(form.qty||0)*parseFloat(form.unitCost||0))}
                 </div>}
                 <div style={{display:"flex",gap:10,marginTop:4}}>
-                  <button style={{...btn("#6366f1"),flex:1}} onClick={()=>submitPO(modal==="editPO")}>{modal==="addPO"?"Create PO":"Save Changes"}</button>
-                  <button style={btn("#f1f5f9","#374151")} onClick={closeModal}>Cancel</button>
+                  <button style={{...btn("var(--accent)"),flex:1}} onClick={()=>submitPO(modal==="editPO")}>{modal==="addPO"?"Create PO":"Save Changes"}</button>
+                  <button style={btn("var(--panel-2)","#374151")} onClick={closeModal}>Cancel</button>
                 </div>
               </div>
             </>}
 
             {/* Add/Edit Production Run */}
             {(modal==="addRun"||modal==="editRun")&&<>
-              <div style={{fontWeight:800,fontSize:17,marginBottom:18,color:"#0f172a"}}>{modal==="addRun"?"🏭 New Production Run":"✏️ Edit Run"}</div>
+              <div style={{fontWeight:800,fontSize:17,marginBottom:18,color:"var(--text)"}}>{modal==="addRun"?"🏭 New Production Run":"✏️ Edit Run"}</div>
               <div style={{display:"grid",gap:11}}>
                 <div><Lbl c="Run Name *"/><input placeholder="e.g. Production Run #104" value={form.name||""} onChange={e=>fset("name",e.target.value)} style={inp}/></div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
@@ -1435,7 +1484,7 @@ const save = useCallback(async (key, val) => {
                 <div>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
                     <Lbl c="Materials to Consume *"/>
-                    <button style={{...btn("#6366f1","#fff","4px 10px"),fontSize:11}} onClick={()=>fset("items",[...(form.items||[]),{materialId:"",qty:""}])}>＋ Add</button>
+                    <button style={{...btn("var(--accent)","#fff","4px 10px"),fontSize:11}} onClick={()=>fset("items",[...(form.items||[]),{materialId:"",qty:""}])}>＋ Add</button>
                   </div>
                   {(form.items||[]).map((item,idx)=>(
                     <div key={idx} style={{display:"grid",gridTemplateColumns:"1fr 100px 30px",gap:8,marginBottom:8,alignItems:"center"}}>
@@ -1444,22 +1493,22 @@ const save = useCallback(async (key, val) => {
                         {mats.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}
                       </select>
                       <input type="number" min={1} placeholder="Qty" value={item.qty||""} onChange={e=>{ const items=[...(form.items||[])]; items[idx]={...items[idx],qty:e.target.value}; fset("items",items); }} style={{...inp,marginBottom:0}}/>
-                      <button onClick={()=>fset("items",(form.items||[]).filter((_,i)=>i!==idx))} style={{background:"#fee2e2",color:"#991b1b",border:"none",borderRadius:6,cursor:"pointer",padding:"6px",fontWeight:700}}>×</button>
+                      <button onClick={()=>fset("items",(form.items||[]).filter((_,i)=>i!==idx))} style={{background:"var(--danger-bg)",color:"var(--danger)",border:"none",borderRadius:6,cursor:"pointer",padding:"6px",fontWeight:700}}>×</button>
                     </div>
                   ))}
-                  {(form.items||[]).length===0&&<div style={{fontSize:12,color:"#94a3b8",fontStyle:"italic"}}>No materials added yet</div>}
+                  {(form.items||[]).length===0&&<div style={{fontSize:12,color:"var(--text-muted)",fontStyle:"italic"}}>No materials added yet</div>}
                 </div>
                 <div><Lbl c="Notes"/><input placeholder="Optional notes…" value={form.notes||""} onChange={e=>fset("notes",e.target.value)} style={inp}/></div>
                 <div style={{display:"flex",gap:10,marginTop:4}}>
-                  <button style={{...btn("#8b5cf6"),flex:1}} onClick={()=>submitRun(modal==="editRun")}>{modal==="addRun"?"Create Run":"Save Changes"}</button>
-                  <button style={btn("#f1f5f9","#374151")} onClick={closeModal}>Cancel</button>
+                  <button style={{...btn("var(--accent)"),flex:1}} onClick={()=>submitRun(modal==="editRun")}>{modal==="addRun"?"Create Run":"Save Changes"}</button>
+                  <button style={btn("var(--panel-2)","#374151")} onClick={closeModal}>Cancel</button>
                 </div>
               </div>
             </>}
 
             {/* Add/Edit User */}
             {(modal==="addUser"||modal==="editUser")&&<>
-              <div style={{fontWeight:800,fontSize:17,marginBottom:18,color:"#0f172a"}}>{modal==="addUser"?"➕ Add User":"✏️ Edit User"}</div>
+              <div style={{fontWeight:800,fontSize:17,marginBottom:18,color:"var(--text)"}}>{modal==="addUser"?"➕ Add User":"✏️ Edit User"}</div>
               <div style={{display:"grid",gap:11}}>
                 <div><Lbl c="Full Name *"/><input placeholder="e.g. Ahmed Al-Rashid" value={form.name||""} onChange={e=>fset("name",e.target.value)} style={inp}/></div>
                 <div><Lbl c="Username *"/><input placeholder="e.g. ahmed.rashid" value={form.username||""} onChange={e=>fset("username",e.target.value)} style={inp}/></div>
@@ -1478,8 +1527,8 @@ const save = useCallback(async (key, val) => {
                   </div>
                 </div>
                 <div style={{display:"flex",gap:10,marginTop:4}}>
-                  <button style={{...btn("#6366f1"),flex:1}} onClick={()=>submitUser(modal==="editUser")}>{modal==="addUser"?"Create User":"Save Changes"}</button>
-                  <button style={btn("#f1f5f9","#374151")} onClick={closeModal}>Cancel</button>
+                  <button style={{...btn("var(--accent)"),flex:1}} onClick={()=>submitUser(modal==="editUser")}>{modal==="addUser"?"Create User":"Save Changes"}</button>
+                  <button style={btn("var(--panel-2)","#374151")} onClick={closeModal}>Cancel</button>
                 </div>
               </div>
             </>}
