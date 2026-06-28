@@ -8,7 +8,7 @@ export const btn = (bg, fg="#fff", pad="8px 16px") => ({ background:bg, color:fg
 // ─── Small Components ─────────────────────────────────────────────────────────
 export const Lbl  = ({c})  => <label style={{display:"block",fontWeight:500,fontSize:12,color:"var(--text-secondary)",marginBottom:6}}>{c}</label>;
 export const Card = ({children,style={}}) => <div style={{background:"var(--panel)",borderRadius:14,border:"1px solid var(--border)",boxShadow:"0 1px 2px rgba(0,0,0,0.05), 0 10px 26px rgba(0,0,0,0.10)",overflow:"hidden",...style}}>{children}</div>;
-export const Th   = ({c,right}) => <th style={{padding:"10px 14px",textAlign:right?"right":"left",fontWeight:500,fontSize:11,letterSpacing:"0.03em",textTransform:"uppercase",whiteSpace:"nowrap",color:"var(--text-muted)",background:"var(--panel-2)",borderBottom:"1px solid var(--border)"}}>{c}</th>;
+export const Th   = ({c,right}) => <th style={{padding:"11px 14px",textAlign:right?"right":"left",fontWeight:600,fontSize:11,letterSpacing:"0.04em",textTransform:"uppercase",whiteSpace:"nowrap",color:"var(--text)",background:"var(--panel-2)",borderBottom:"1px solid var(--border)"}}>{c}</th>;
 export const Td   = ({c,right,bold,color,style={}}) => <td style={{padding:"10px 14px",textAlign:right?"right":"left",fontWeight:bold?600:400,color:color||"var(--text)",fontSize:13,borderBottom:"1px solid var(--border)",...style}}>{c}</td>;
 export function Badge({label,color,bg}) { return <span style={{background:bg,color,borderRadius:6,padding:"3px 9px",fontSize:11,fontWeight:600,whiteSpace:"nowrap"}}>{label}</span>; }
 export function RoleBadge({role}) { return <Badge label={role} color={ROLE_COLORS[role]} bg={ROLE_COLORS[role]+"22"}/>; }

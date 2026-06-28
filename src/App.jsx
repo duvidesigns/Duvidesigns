@@ -633,7 +633,7 @@ const save = useCallback(async (key, val) => {
       {showNotif&&<div style={{position:"fixed",top:54,right:16,zIndex:500,background:"var(--panel)",borderRadius:12,border:"1px solid #e2e8f0",width:340,boxShadow:"0 8px 30px rgba(0,0,0,0.15)",maxHeight:400,overflowY:"auto"}}>
         <div style={{padding:"12px 16px",borderBottom:"1px solid #f1f5f9",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <span style={{fontWeight:700,fontSize:14}}>Notifications</span>
-          <button style={{...btn("var(--panel-2)","#374151","4px 10px"),fontSize:11}} onClick={()=>{setNotifs(n=>n.map(x=>({...x,read:true})));setShowNotif(false);}}>Clear all</button>
+          <button style={{...btn("var(--panel-2)","var(--text-secondary)","4px 10px"),fontSize:11}} onClick={()=>{setNotifs(n=>n.map(x=>({...x,read:true})));setShowNotif(false);}}>Clear all</button>
         </div>
         {notifs.length===0?<EmptyState icon="🔔" msg="No notifications"/>:notifs.slice(0,20).map(n=>(
           <div key={n.id} onClick={()=>setNotifs(prev=>prev.map(x=>x.id===n.id?{...x,read:true}:x))} style={{padding:"10px 16px",borderBottom:"1px solid #f8fafc",background:n.read?"#fff":"#fefce8",cursor:"pointer"}}>
@@ -873,7 +873,7 @@ const save = useCallback(async (key, val) => {
         {tab==="Purchase Orders"&&(
           <div>
             <SectionBar title="Purchase Orders">
-              {["All","Pending","Received","Closed"].map(f=><button key={f} style={{...btn(poFilter===f?"#0f172a":"var(--border)",poFilter===f?"#fff":"#374151")}} onClick={()=>setPoFilter(f)}>{f}</button>)}
+              {["All","Pending","Received","Closed"].map(f=><button key={f} style={{...btn(poFilter===f?"#0f172a":"var(--border)",poFilter===f?"#fff":"var(--text-secondary)")}} onClick={()=>setPoFilter(f)}>{f}</button>)}
               {can("createPO")&&<button style={btn("var(--accent)")} onClick={()=>openModal("addPO")}>＋ Create PO</button>}
             </SectionBar>
             <Card style={{overflow:"auto"}}>
@@ -920,7 +920,7 @@ const save = useCallback(async (key, val) => {
         {tab==="Production Runs"&&(
           <div>
             <SectionBar title="Production Runs">
-              {["All","Planned","In Progress","Completed"].map(f=><button key={f} style={{...btn(runFilter===f?"#0f172a":"var(--border)",runFilter===f?"#fff":"#374151")}} onClick={()=>setRunFilter(f)}>{f}</button>)}
+              {["All","Planned","In Progress","Completed"].map(f=><button key={f} style={{...btn(runFilter===f?"#0f172a":"var(--border)",runFilter===f?"#fff":"var(--text-secondary)")}} onClick={()=>setRunFilter(f)}>{f}</button>)}
               {can("createRun")&&<button style={btn("var(--accent)")} onClick={()=>openModal("addRun")}>＋ New Run</button>}
             </SectionBar>
             <div style={{display:"grid",gap:14}}>
@@ -989,7 +989,7 @@ const save = useCallback(async (key, val) => {
                       </>
                     ):<div style={{color:"var(--text-muted)",fontStyle:"italic",fontSize:11}}>🔒 Contact details restricted</div>}
                     <div><span style={{color:"var(--text-muted)"}}>Lead Time: </span><b style={{color:"#6366f1"}}>{s.lead} days</b></div>
-                    <div><span style={{color:"var(--text-muted)"}}>Materials: </span><span style={{color:"#374151"}}>{s.materials}</span></div>
+                    <div><span style={{color:"var(--text-muted)"}}>Materials: </span><span style={{color:"var(--text-secondary)"}}>{s.materials}</span></div>
                   </div>
                   {(can("editSup")||can("delSup"))&&(
                     <div style={{display:"flex",gap:8}}>
@@ -1047,7 +1047,7 @@ const save = useCallback(async (key, val) => {
                       {categoryData.map((c,i)=>(
                         <div key={c.name} style={{display:"flex",alignItems:"center",gap:8,fontSize:12}}>
                           <div style={{width:10,height:10,borderRadius:"50%",background:["#6366f1","#3b82f6","#10b981","#f59e0b","#f43f5e","#8b5cf6","#06b6d4"][i%7],flexShrink:0}}/>
-                          <span style={{flex:1,color:"#374151"}}>{c.name}</span>
+                          <span style={{flex:1,color:"var(--text-secondary)"}}>{c.name}</span>
                           <span style={{fontWeight:700,color:"var(--text)"}}>{fmtC(c.value)}</span>
                         </div>
                       ))}
@@ -1195,7 +1195,7 @@ const save = useCallback(async (key, val) => {
                         <Td c={`${fmtN(m.stock)} ${m.unit}`} right bold/>
                         <Td c={f.avgDailyUsage>0?`${f.avgDailyUsage} ${m.unit}/day`:"—"} right color="var(--text-muted)"/>
                         <Td c={f.daysLeft!==null?`${f.daysLeft} days`:"—"} right bold color={urgCfg.color}/>
-                        <Td c={f.reorderDate||"—"} right color="#374151"/>
+                        <Td c={f.reorderDate||"—"} right color="var(--text-secondary)"/>
                         <Td c={f.reorderQty?`${f.reorderQty} ${m.unit}`:"—"} right bold color="#6366f1"/>
                         <td style={{padding:"10px 13px"}}>
                           <Badge label={urgCfg.label} color={urgCfg.color} bg={urgCfg.bg}/>
@@ -1231,7 +1231,7 @@ const save = useCallback(async (key, val) => {
                         <RoleBadge role={entry.userRole||"Viewer"}/>
                       </td>
                       <td style={{padding:"9px 13px"}}>
-                        <span style={{background:"var(--panel-2)",borderRadius:6,padding:"3px 8px",fontSize:11,fontWeight:700,color:"#374151",fontFamily:"monospace"}}>{entry.action}</span>
+                        <span style={{background:"var(--panel-2)",borderRadius:6,padding:"3px 8px",fontSize:11,fontWeight:700,color:"var(--text-secondary)",fontFamily:"monospace"}}>{entry.action}</span>
                       </td>
                       <Td c={entry.entity} color="var(--text-muted)"/>
                       <Td c={entry.details}/>
@@ -1293,7 +1293,7 @@ const save = useCallback(async (key, val) => {
                     </div>
                     <div style={{padding:"16px 18px",display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(250px,1fr))",gap:20}}>
                       <div>
-                        <div style={{fontWeight:700,fontSize:12,color:"#374151",marginBottom:10,paddingBottom:6,borderBottom:"1px solid #f1f5f9"}}>📑 Visible Tabs</div>
+                        <div style={{fontWeight:700,fontSize:12,color:"var(--text-secondary)",marginBottom:10,paddingBottom:6,borderBottom:"1px solid #f1f5f9"}}>📑 Visible Tabs</div>
                         {Object.entries(rp.tabs).filter(([k])=>k!=="admin").map(([key,val])=>(
                           <div key={key} style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
                             <span style={{fontSize:12,color:"var(--text-secondary)",textTransform:"capitalize"}}>{key==="costs"?"Cost & Analytics":key==="purchaseOrders"?"Purchase Orders":key==="productionRuns"?"Production Runs":key==="auditLog"?"Audit Log":key}</span>
@@ -1302,7 +1302,7 @@ const save = useCallback(async (key, val) => {
                         ))}
                       </div>
                       <div>
-                        <div style={{fontWeight:700,fontSize:12,color:"#374151",marginBottom:10,paddingBottom:6,borderBottom:"1px solid #f1f5f9"}}>⚡ Actions Allowed</div>
+                        <div style={{fontWeight:700,fontSize:12,color:"var(--text-secondary)",marginBottom:10,paddingBottom:6,borderBottom:"1px solid #f1f5f9"}}>⚡ Actions Allowed</div>
                         {[["stockIn","Stock In"],["stockOut","Stock Out"],["addMat","Add Material"],["editMat","Edit Material"],["delMat","Delete Material"],["editThresh","Edit Threshold"],["createPO","Create PO"],["receivePO","Receive PO"],["createRun","Create Production Run"],["completeRun","Complete Run"],["exportData","Export CSV"]].map(([key,label])=>(
                           <div key={key} style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
                             <span style={{fontSize:12,color:"var(--text-secondary)"}}>{label}</span>
@@ -1311,7 +1311,7 @@ const save = useCallback(async (key, val) => {
                         ))}
                       </div>
                       <div>
-                        <div style={{fontWeight:700,fontSize:12,color:"#374151",marginBottom:10,paddingBottom:6,borderBottom:"1px solid #f1f5f9"}}>🔒 Data Visibility</div>
+                        <div style={{fontWeight:700,fontSize:12,color:"var(--text-secondary)",marginBottom:10,paddingBottom:6,borderBottom:"1px solid #f1f5f9"}}>🔒 Data Visibility</div>
                         {[["viewCosts","Unit Costs & Prices"],["viewContacts","Supplier Contacts"],["viewAllTxn","All Transactions (not just own)"],["viewAuditLog","Audit Log Access"]].map(([key,label])=>(
                           <div key={key} style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
                             <span style={{fontSize:12,color:"var(--text-secondary)"}}>{label}</span>
@@ -1364,7 +1364,7 @@ const save = useCallback(async (key, val) => {
                 <div><Lbl c="Reference / PO Number"/><input placeholder="e.g. PO-003, Production note…" value={form.ref||""} onChange={e=>fset("ref",e.target.value)} style={inp}/></div>
                 <div style={{display:"flex",gap:10,marginTop:4}}>
                   <button style={{...btn(modal==="txnIn"?"#10b981":"#f43f5e"),flex:1}} onClick={()=>submitTxn(modal==="txnIn"?"in":"out")}>Confirm</button>
-                  <button style={btn("var(--panel-2)","#374151")} onClick={closeModal}>Cancel</button>
+                  <button style={btn("var(--panel-2)","var(--text-secondary)")} onClick={closeModal}>Cancel</button>
                 </div>
               </div>
             </>}
@@ -1395,7 +1395,7 @@ const save = useCallback(async (key, val) => {
                 </div>
                 <div style={{display:"flex",gap:10,marginTop:4}}>
                   <button style={{...btn("var(--accent)"),flex:1}} onClick={()=>submitMat(modal==="editMat")}>{modal==="addMat"?"Add Material":"Save Changes"}</button>
-                  <button style={btn("var(--panel-2)","#374151")} onClick={closeModal}>Cancel</button>
+                  <button style={btn("var(--panel-2)","var(--text-secondary)")} onClick={closeModal}>Cancel</button>
                 </div>
               </div>
             </>}
@@ -1408,7 +1408,7 @@ const save = useCallback(async (key, val) => {
               <input type="number" min={0} value={form.threshold||""} onChange={e=>fset("threshold",e.target.value)} style={{...inp,marginBottom:14}}/>
               <div style={{display:"flex",gap:10}}>
                 <button style={{...btn("var(--warning)"),flex:1}} onClick={submitThreshold}>Update</button>
-                <button style={btn("var(--panel-2)","#374151")} onClick={closeModal}>Cancel</button>
+                <button style={btn("var(--panel-2)","var(--text-secondary)")} onClick={closeModal}>Cancel</button>
               </div>
             </>}
 
@@ -1429,7 +1429,7 @@ const save = useCallback(async (key, val) => {
                 </div>
                 <div style={{display:"flex",gap:10,marginTop:4}}>
                   <button style={{...btn("var(--accent)"),flex:1}} onClick={()=>submitSup(modal==="editSup")}>{modal==="addSup"?"Add Supplier":"Save Changes"}</button>
-                  <button style={btn("var(--panel-2)","#374151")} onClick={closeModal}>Cancel</button>
+                  <button style={btn("var(--panel-2)","var(--text-secondary)")} onClick={closeModal}>Cancel</button>
                 </div>
               </div>
             </>}
@@ -1462,7 +1462,7 @@ const save = useCallback(async (key, val) => {
                 </div>}
                 <div style={{display:"flex",gap:10,marginTop:4}}>
                   <button style={{...btn("var(--accent)"),flex:1}} onClick={()=>submitPO(modal==="editPO")}>{modal==="addPO"?"Create PO":"Save Changes"}</button>
-                  <button style={btn("var(--panel-2)","#374151")} onClick={closeModal}>Cancel</button>
+                  <button style={btn("var(--panel-2)","var(--text-secondary)")} onClick={closeModal}>Cancel</button>
                 </div>
               </div>
             </>}
@@ -1501,7 +1501,7 @@ const save = useCallback(async (key, val) => {
                 <div><Lbl c="Notes"/><input placeholder="Optional notes…" value={form.notes||""} onChange={e=>fset("notes",e.target.value)} style={inp}/></div>
                 <div style={{display:"flex",gap:10,marginTop:4}}>
                   <button style={{...btn("var(--accent)"),flex:1}} onClick={()=>submitRun(modal==="editRun")}>{modal==="addRun"?"Create Run":"Save Changes"}</button>
-                  <button style={btn("var(--panel-2)","#374151")} onClick={closeModal}>Cancel</button>
+                  <button style={btn("var(--panel-2)","var(--text-secondary)")} onClick={closeModal}>Cancel</button>
                 </div>
               </div>
             </>}
@@ -1528,7 +1528,7 @@ const save = useCallback(async (key, val) => {
                 </div>
                 <div style={{display:"flex",gap:10,marginTop:4}}>
                   <button style={{...btn("var(--accent)"),flex:1}} onClick={()=>submitUser(modal==="editUser")}>{modal==="addUser"?"Create User":"Save Changes"}</button>
-                  <button style={btn("var(--panel-2)","#374151")} onClick={closeModal}>Cancel</button>
+                  <button style={btn("var(--panel-2)","var(--text-secondary)")} onClick={closeModal}>Cancel</button>
                 </div>
               </div>
             </>}
