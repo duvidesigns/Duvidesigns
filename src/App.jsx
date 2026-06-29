@@ -7,7 +7,7 @@ import { ref, set, get } from "firebase/database";
 import { db } from "./firebase";
 import { supabase } from "./supabase";
 import { ROLE_COLORS, ROLE_BADGES, CATEGORIES, UNITS, PO_COLORS, RUN_COLORS, DEFAULT_PERMS, SEED_USERS, SEED_MATERIALS, SEED_SUPPLIERS, SEED_TXN, SEED_POs, SEED_RUNS, SEED_AUDIT } from "./data";
-import { fmtN, fmtC, uid, now, today, fmtTs, stockStatus, getMonthlyData, getForecast, get30DayValueTrend, getCategoryBreakdown, downloadFile, toCSV } from "./helpers";
+import { fmtN, fmtC, uid, now, today, fmtTs, stockStatus, getMonthlyData, getForecast, get30DayValueTrend, getCategoryBreakdown, downloadFile, toCSV, CURRENCY, setCurrency } from "./helpers";
 import { inp, btn, Lbl, Card, Th, Td, Badge, RoleBadge, Toggle, SectionBar, EmptyState } from "./components";
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -56,6 +56,7 @@ export default function App() {
   const [acctOpen, setAcctOpen] = useState(null);
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   const [profileUsers, setProfileUsers] = useState([]);
+  const [settings, setSettings] = useState({companyName:"InventoryOS",currency:"₹",logoUrl:""});
   useEffect(()=>{
     try { localStorage.setItem("io-theme", theme); } catch(e){}
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
@@ -140,6 +141,8 @@ const save = useCallback(async (key, val) => {
       if(!r) save("io-runs",SEED_RUNS); if(!a) save("io-audit",SEED_AUDIT);
       const { data: supData } = await supabase.from("suppliers").select("*");
       setSups(supData||[]);
+      const { data: cfg } = await supabase.from("app_config").select("value").eq("key","settings").maybeSingle();
+      if (cfg?.value) { setSettings(s=>({...s,...cfg.value})); setCurrency(cfg.value.currency); }
       setLoading(false);
     })();
   },[]);
@@ -309,6 +312,39 @@ const save = useCallback(async (key, val) => {
     setProfileUsers(ps=>ps.filter(p=>p.id!==id));
   }
   useEffect(()=>{ if (session && tab==="Admin") loadProfiles(); },[tab, session]);
+
+  async function saveSettings(next) {
+    setSettings(next); setCurrency(next.currency);
+    await supabase.from("app_config").upsert({ key:"settings", value:next });
+    toast$("Settings saved ✓");
+  }
+  function parseCSV(text) {
+    const lines = text.replace(/\r/g,"").split("\n").filter(l=>l.trim());
+    if (!lines.length) return [];
+    const split = (line)=>{ const out=[]; let cur="",q=false; for(let i=0;i<line.length;i++){ const c=line[i]; if(c==='"'){ if(q&&line[i+1]==='"'){cur+='"';i++;} else q=!q; } else if(c===","&&!q){ out.push(cur); cur=""; } else cur+=c; } out.push(cur); return out; };
+    const headers = split(lines[0]).map(h=>h.trim().toLowerCase());
+    return lines.slice(1).map(l=>{ const cells=split(l); const o={}; headers.forEach((h,i)=>o[h]=(cells[i]??"").trim()); return o; });
+  }
+  async function importInventoryCSV(e) {
+    const file=e.target.files?.[0]; if(e.target) e.target.value=""; if(!file) return;
+    const text=await file.text();
+    const rows=parseCSV(text);
+    if(!rows.length){ toast$("No rows found in CSV"); return; }
+    const imported=rows.map(r=>({
+      id:(r.id||r["material id"]||("RM-"+uid())).toString().trim(),
+      name:r.name||r.material||"", category:r.category||"", supplier:r.supplier||"", unit:r.unit||"",
+      stock:Number(r.stock)||0, threshold:Number(r.threshold)||0,
+      unitCost:Number(r["unit cost"]||r.unitcost||r.cost)||0,
+    })).filter(m=>m.name);
+    if(!imported.length){ toast$("No valid rows — need at least a Name column"); return; }
+    const map=new Map(mats.map(m=>[m.id,m]));
+    imported.forEach(m=>map.set(m.id,{...map.get(m.id),...m}));
+    const merged=[...map.values()];
+    setMats(merged); await save("io-mats",merged);
+    const entry=addAuditEntry("CSV_IMPORT","Material","-",`Imported ${imported.length} material(s) from CSV`);
+    const newA=[entry,...audit].slice(0,500); setAudit(newA); save("io-audit",newA);
+    toast$(`Imported ${imported.length} material(s) ✓`);
+  }
 
   async function handleLogin() {
     if (loginF.loading) return;
@@ -627,7 +663,7 @@ const save = useCallback(async (key, val) => {
   },[txns,session,perms]);
   const filteredMats = useMemo(()=>mats.filter(m=>!search||m.name.toLowerCase().includes(search.toLowerCase())||m.id.toLowerCase().includes(search.toLowerCase())),[mats,search]);
   const monthlyData  = useMemo(()=>getMonthlyData(txns,mats),[txns,mats]);
-  const fmtCompact = (n) => { n=Number(n)||0; const neg=n<0; n=Math.abs(n); let r; if(n>=1e7) r="₹"+(n/1e7).toFixed(2)+" Cr"; else if(n>=1e5) r="₹"+(n/1e5).toFixed(2)+" L"; else if(n>=1e3) r="₹"+(n/1e3).toFixed(1)+"K"; else r="₹"+n.toFixed(0); return (neg?"-":"")+r; };
+  const fmtCompact = (n) => { n=Number(n)||0; const neg=n<0; n=Math.abs(n); let r; if(n>=1e7) r=CURRENCY+(n/1e7).toFixed(2)+" Cr"; else if(n>=1e5) r=CURRENCY+(n/1e5).toFixed(2)+" L"; else if(n>=1e3) r=CURRENCY+(n/1e3).toFixed(1)+"K"; else r=CURRENCY+n.toFixed(0); return (neg?"-":"")+r; };
   const healthSplit = useMemo(()=>{
     let healthy=0, low=0, out=0;
     mats.forEach(m=>{ if(m.stock<=0) out++; else if(m.stock<=m.threshold) low++; else healthy++; });
@@ -866,8 +902,10 @@ const save = useCallback(async (key, val) => {
       {/* Sidebar */}
       <aside style={{width:230,flexShrink:0,background:"var(--sidebar-bg)",borderRight:"1px solid var(--sidebar-border)",height:"100vh",position:"sticky",top:0,display:"flex",flexDirection:"column",padding:"16px 12px",zIndex:100}}>
         <div style={{display:"flex",alignItems:"center",gap:10,padding:"4px 8px 18px"}}>
-          <div style={{width:30,height:30,borderRadius:8,background:"var(--accent)",color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><Boxes size={18}/></div>
-          <span style={{fontSize:15,fontWeight:600,color:"var(--sidebar-text)",letterSpacing:"-0.3px"}}>InventoryOS</span>
+          {settings.logoUrl
+            ? <img src={settings.logoUrl} alt="logo" style={{width:30,height:30,borderRadius:8,objectFit:"cover",flexShrink:0}}/>
+            : <div style={{width:30,height:30,borderRadius:8,background:"var(--accent)",color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><Boxes size={18}/></div>}
+          <span style={{fontSize:15,fontWeight:600,color:"var(--sidebar-text)",letterSpacing:"-0.3px"}}>{settings.companyName||"InventoryOS"}</span>
         </div>
         <nav style={{display:"flex",flexDirection:"column",gap:2,overflowY:"auto",flex:1}}>
           {visibleTabs.map(t=>{ const Icon=TAB_ICONS[t.key]||LayoutDashboard; const active=tab===t.key; return (
@@ -1045,6 +1083,7 @@ const save = useCallback(async (key, val) => {
             <SectionBar title="Inventory">
               <input placeholder="Search…" value={search} onChange={e=>setSearch(e.target.value)} style={{...inp,width:170}}/>
               {can("exportData")&&<button style={btn("var(--text-secondary)")} onClick={exportInventoryCSV}>⬇ Export CSV</button>}
+              {can("addMat")&&<><input id="io-csv-input" type="file" accept=".csv" style={{display:"none"}} onChange={importInventoryCSV}/><button style={btn("var(--text-secondary)")} onClick={()=>document.getElementById("io-csv-input").click()}>⬆ Import CSV</button></>}
               {can("addMat")&&<button style={btn("var(--accent)")} onClick={()=>openModal("addMat")}>＋ Add Material</button>}
               {can("stockIn")&&<button style={btn("var(--success)")} onClick={()=>openModal("txnIn")}>📥 Stock In</button>}
               {can("stockOut")&&<button style={btn("var(--danger)")} onClick={()=>openModal("txnOut")}>📤 Stock Out</button>}
@@ -1361,7 +1400,7 @@ const save = useCallback(async (key, val) => {
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--panel-2)"/>
                   <XAxis dataKey="label" tick={{fontSize:10}} stroke="var(--text-muted)" interval={4}/>
-                  <YAxis tick={{fontSize:10}} stroke="var(--text-muted)" tickFormatter={v=>`₹${(v/1000).toFixed(0)}k`}/>
+                  <YAxis tick={{fontSize:10}} stroke="var(--text-muted)" tickFormatter={v=>`${CURRENCY}${(v/1000).toFixed(0)}k`}/>
                   <Tooltip formatter={v=>[fmtC(v),"Stock Value"]} labelStyle={{fontWeight:700}}/>
                   <Area type="monotone" dataKey="stockValue" stroke="#6366f1" strokeWidth={2} fill="url(#stockGrad)"/>
                 </AreaChart>
@@ -1516,6 +1555,18 @@ const save = useCallback(async (key, val) => {
         {tab==="Admin"&&(
           <div>
             <h2 style={{margin:"0 0 20px",fontSize:20,fontWeight:800,color:"var(--text)"}}>Admin Panel</h2>
+            <Card style={{marginBottom:20}}>
+              <div style={{padding:"14px 18px",borderBottom:"1px solid var(--border)"}}>
+                <div style={{fontWeight:600,fontSize:14,color:"var(--text)"}}>Company settings</div>
+                <div style={{fontSize:12,color:"var(--text-muted)",marginTop:3}}>Branding and currency used across the whole app.</div>
+              </div>
+              <div style={{padding:"16px 18px",display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+                <div><Lbl c="Company name"/><input value={settings.companyName} onChange={e=>setSettings(s=>({...s,companyName:e.target.value}))} style={inp}/></div>
+                <div><Lbl c="Currency symbol"/><input value={settings.currency} onChange={e=>setSettings(s=>({...s,currency:e.target.value}))} maxLength={3} style={inp}/></div>
+                <div style={{gridColumn:"1 / -1"}}><Lbl c="Logo URL (optional)"/><input value={settings.logoUrl} onChange={e=>setSettings(s=>({...s,logoUrl:e.target.value}))} placeholder="https://…/logo.png" style={inp}/></div>
+              </div>
+              <div style={{padding:"0 18px 16px"}}><button style={btn("var(--accent)")} onClick={()=>saveSettings(settings)}>Save settings</button></div>
+            </Card>
 
             {/* User Management (Supabase profiles) */}
             <Card style={{marginBottom:20}}>

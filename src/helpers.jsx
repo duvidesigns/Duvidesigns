@@ -1,6 +1,8 @@
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 export const fmtN  = (n) => (n??0).toLocaleString("en-IN",{maximumFractionDigits:2});
-export const fmtC  = (n) => "₹"+(n??0).toLocaleString("en-IN",{minimumFractionDigits:2,maximumFractionDigits:2});
+export let CURRENCY = "₹";
+export const setCurrency = (s) => { CURRENCY = s || "₹"; };
+export const fmtC  = (n) => CURRENCY+(n??0).toLocaleString("en-IN",{minimumFractionDigits:2,maximumFractionDigits:2});
 export const uid   = () => Math.random().toString(36).slice(2,9).toUpperCase();
 export const now   = () => new Date().toISOString();
 export const today = () => new Date().toISOString().slice(0,10);
