@@ -1052,8 +1052,8 @@ const save = useCallback(async (key, val) => {
             <Card style={{overflow:"auto"}}>
               <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
                 <thead><tr>
-                  <Th c="ID"/> <Th c="Material"/> <Th c="Category"/> <Th c="Supplier"/> <Th c="Unit"/>
-                  <Th c="Stock" right/> <Th c="Threshold" right/> <Th c="Status"/>
+                  <Th c="ID"/><Th c="Material"/><Th c="Category"/><Th c="Supplier"/><Th c="Unit"/>
+                  <Th c="Stock" right/><Th c="Threshold" right/><Th c="Status"/>
                   {data("viewCosts")&&<><Th c="Unit Cost" right/><Th c="Stock Value" right/></>}
                   <Th c="Actions"/>
                 </tr></thead>
@@ -1105,9 +1105,9 @@ const save = useCallback(async (key, val) => {
             <Card style={{overflow:"auto"}}>
               <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
                 <thead><tr>
-                  <Th c="TXN ID"/> <Th c="Date"/> <Th c="Material"/> <Th c="Type"/> <Th c="Qty" right/>
+                  <Th c="TXN ID"/><Th c="Date"/><Th c="Material"/><Th c="Type"/><Th c="Qty" right/>
                   {data("viewCosts")&&<><Th c="Unit Cost" right/><Th c="Total" right/></>}
-                  <Th c="Reference"/> <Th c="Source"/> <Th c="By"/>
+                  <Th c="Reference"/><Th c="Source"/><Th c="By"/>
                 </tr></thead>
                 <tbody>
                   {visibleTxn.map((tx,i)=>{
@@ -1147,9 +1147,9 @@ const save = useCallback(async (key, val) => {
             <Card style={{overflow:"auto"}}>
               <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
                 <thead><tr>
-                  <Th c="PO ID"/> <Th c="Date"/> <Th c="Supplier"/> <Th c="Material"/> <Th c="Qty" right/>
+                  <Th c="PO ID"/><Th c="Date"/><Th c="Supplier"/><Th c="Material"/><Th c="Qty" right/>
                   {data("viewCosts")&&<Th c="PO Value" right/>}
-                  <Th c="Expected"/> <Th c="Status"/> <Th c="Actions"/>
+                  <Th c="Expected"/><Th c="Status"/><Th c="Actions"/>
                 </tr></thead>
                 <tbody>
                   {pos.filter(p=>poFilter==="All"||p.status===poFilter).map((po,i)=>{
@@ -1376,7 +1376,7 @@ const save = useCallback(async (key, val) => {
               </div>
               <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
                 <thead><tr>
-                  <Th c="Material"/> <Th c="Category"/> <Th c="Unit Cost" right/> <Th c="Stock" right/> <Th c="Stock Value" right/> <Th c="Cost In" right/> <Th c="Cost Out" right/> <Th c="Net" right/>
+                  <Th c="Material"/><Th c="Category"/><Th c="Unit Cost" right/><Th c="Stock" right/><Th c="Stock Value" right/><Th c="Cost In" right/><Th c="Cost Out" right/><Th c="Net" right/>
                 </tr></thead>
                 <tbody>
                   {mats.map((m,i)=>{
@@ -1488,7 +1488,7 @@ const save = useCallback(async (key, val) => {
             <Card style={{overflow:"auto"}}>
               <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
                 <thead><tr>
-                  <Th c="Timestamp"/> <Th c="User"/> <Th c="Action"/> <Th c="Entity"/> <Th c="Details"/>
+                  <Th c="Timestamp"/><Th c="User"/><Th c="Action"/><Th c="Entity"/><Th c="Details"/>
                 </tr></thead>
                 <tbody>
                   {[...audit].sort((a,b)=>b.ts.localeCompare(a.ts)).map((entry,i)=>(
