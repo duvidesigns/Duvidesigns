@@ -48,8 +48,8 @@ export default function App() {
   const [poFilter, setPoFilter] = useState("All");
   const [runFilter,setRunFilter]= useState("All");
   const [theme,    setTheme]    = useState(()=>{ try { return localStorage.getItem("io-theme")||"system"; } catch(e){ return "system"; } });
-  const [now, setNow] = useState(new Date());
-  useEffect(()=>{ const t=setInterval(()=>setNow(new Date()),1000); return ()=>clearInterval(t); },[]);
+  const [clock, setClock] = useState(new Date());
+  useEffect(()=>{ const t=setInterval(()=>setClock(new Date()),1000); return ()=>clearInterval(t); },[]);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [acct, setAcct] = useState({ name:"", phone:"", gender:"", dob:"", curPw:"", newPw:"", confPw:"", error:"", info:"", loading:false });
@@ -87,6 +87,9 @@ const save = useCallback(async (key, val) => {
       const rows=(val||[]).map(a=>({ id:a.id, ts:a.ts, userid:a.userId, username:a.userName, userrole:a.userRole, action:a.action, entity:a.entity, entityid:a.entityId, details:a.details }));
       await supabase.from("audit_log").upsert(rows); return;
     }
+    if (key === "io-perms") {
+      await supabase.from("app_config").upsert({ key:"perms", value:val }); return;
+    }
     try { await set(ref(db, "duvidesigns/" + key), JSON.stringify(val)); } catch(e){}
   }, []);
   const load = useCallback(async (key) => {
@@ -115,6 +118,10 @@ const save = useCallback(async (key, val) => {
       if (!data || data.length===0) return null;
       return data.map(r=>({ id:r.id, ts:r.ts, userId:r.userid, userName:r.username, userRole:r.userrole, action:r.action, entity:r.entity, entityId:r.entityid, details:r.details }));
     }
+    if (key === "io-perms") {
+      const { data } = await supabase.from("app_config").select("value").eq("key","perms").maybeSingle();
+      return data?.value ?? null;
+    }
     try { const snap = await get(ref(db, "duvidesigns/" + key)); return snap.exists() ? JSON.parse(snap.val()) : null; } catch(e){ return null; }
   }, []);
   // ── Boot ───────────────────────────────────────────────────────────────────
@@ -137,22 +144,34 @@ const save = useCallback(async (key, val) => {
     })();
   },[]);
 
-  // ── Poll ───────────────────────────────────────────────────────────────────
+  // ── Refresh (shared by poll + realtime) ──────────────────────────────────────
+  const refreshData = useCallback(async () => {
+    const [m,t,po,r,u,p,a] = await Promise.all([
+      load("io-mats"),load("io-txns"),load("io-pos"),load("io-runs"),
+      load("io-users"),load("io-perms"),load("io-audit"),
+    ]);
+    if(m) setMats(m); if(t) setTxns(t); if(po) setPOs(po); if(r) setRuns(r);
+    if(u) setUsers(u); if(a) setAudit(a);
+    const { data: supPoll } = await supabase.from("suppliers").select("*");
+    if(supPoll) setSups(supPoll);
+    if(p) { setPerms(p); setSession(prev=>prev?{...prev,perms:p[prev.user.role]}:prev); }
+  },[load]);
+
+  // ── Poll (fallback safety net) ───────────────────────────────────────────────
   useEffect(() => {
     if (!session) return;
-    const iv = setInterval(async () => {
-      const [m,t,po,r,u,p,a,s] = await Promise.all([
-        load("io-mats"),load("io-txns"),load("io-pos"),load("io-runs"),
-        load("io-users"),load("io-perms"),load("io-audit"),load("io-sups"),
-      ]);
-      if(m) setMats(m); if(t) setTxns(t); if(po) setPOs(po); if(r) setRuns(r);
-      if(u) setUsers(u); if(a) setAudit(a);
-      const { data: supPoll } = await supabase.from("suppliers").select("*");
-      if(supPoll) setSups(supPoll);
-      if(p) { setPerms(p); setSession(prev=>prev?{...prev,perms:p[prev.user.role]}:prev); }
-    },10000);
+    const iv = setInterval(refreshData, 10000);
     return ()=>clearInterval(iv);
-  },[session]);
+  },[session, refreshData]);
+
+  // ── Real-time (instant updates via Supabase) ─────────────────────────────────
+  useEffect(() => {
+    if (!session) return;
+    let timer=null;
+    const ping=()=>{ clearTimeout(timer); timer=setTimeout(refreshData,400); };
+    const ch = supabase.channel("io-realtime").on("postgres_changes",{event:"*",schema:"public"},ping).subscribe();
+    return ()=>{ clearTimeout(timer); supabase.removeChannel(ch); };
+  },[session, refreshData]);
 
   // ── Stock Alert Push Notifications ─────────────────────────────────────────
   useEffect(() => {
@@ -166,7 +185,7 @@ const save = useCallback(async (key, val) => {
       const sent = JSON.parse(localStorage.getItem(notifKey)||"[]");
       criticalMats.forEach(m => {
         if (!sent.includes(m.id)) {
-          new Notification("⚠ InventoryOS Stock Alert", {
+          new Notification("InventoryOS Stock Alert", {
             body: `${m.name} is running low — only ${m.stock} ${m.unit} left (threshold: ${m.threshold})`,
             icon: "/logo192.png"
           });
@@ -626,16 +645,16 @@ const save = useCallback(async (key, val) => {
   },[mats,txns,sups]);
 
   const TAB_MAP = [
-    {key:"Dashboard",label:"📊 Dashboard",perm:"dashboard"},
-    {key:"Inventory",label:"📦 Inventory",perm:"inventory"},
-    {key:"Transactions",label:"📋 Transactions",perm:"transactions"},
-    {key:"Purchase Orders",label:"🧾 Purchase Orders",perm:"purchaseOrders"},
-    {key:"Production Runs",label:"🏭 Production Runs",perm:"productionRuns"},
-    {key:"Suppliers",label:"🏢 Suppliers",perm:"suppliers"},
-    {key:"Cost & Analytics",label:"💰 Cost & Analytics",perm:"costs"},
+    {key:"Dashboard",label:"Dashboard",perm:"dashboard"},
+    {key:"Inventory",label:"Inventory",perm:"inventory"},
+    {key:"Transactions",label:"Transactions",perm:"transactions"},
+    {key:"Purchase Orders",label:"Purchase Orders",perm:"purchaseOrders"},
+    {key:"Production Runs",label:"Production Runs",perm:"productionRuns"},
+    {key:"Suppliers",label:"Suppliers",perm:"suppliers"},
+    {key:"Cost & Analytics",label:"Cost & Analytics",perm:"costs"},
     {key:"Forecasting",label:"🔮 Forecasting",perm:"costs"},
-    {key:"Audit Log",label:"🔍 Audit Log",perm:"auditLog"},
-    {key:"Admin",label:"⚙ Admin",perm:"admin"},
+    {key:"Audit Log",label:"Audit Log",perm:"auditLog"},
+    {key:"Admin",label:"Admin",perm:"admin"},
   ];
   const visibleTabs = TAB_MAP.filter(t=>see(t.perm));
 
@@ -745,7 +764,7 @@ const save = useCallback(async (key, val) => {
   const stTag={fontSize:11.5,color:"var(--text-muted)"};
   const stExp={padding:"0 18px 14px",background:"var(--panel-2)",borderTop:"1px solid var(--border)"};
   const stSave={background:"var(--accent)",color:"#fff",border:"none",borderRadius:9,padding:"9px 16px",fontWeight:600,fontSize:13,cursor:"pointer",marginTop:12};
-  const clockStr = now.toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"})+" · "+now.toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit",hour12:true});
+  const clockStr = clock.toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"})+" · "+clock.toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit",hour12:true});
 
   if (user.role==="Pending") return (
     <div style={{minHeight:"100vh",background:"var(--bg)",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
@@ -1024,7 +1043,7 @@ const save = useCallback(async (key, val) => {
         {tab==="Inventory"&&(
           <div>
             <SectionBar title="Inventory">
-              <input placeholder="🔍 Search…" value={search} onChange={e=>setSearch(e.target.value)} style={{...inp,width:170}}/>
+              <input placeholder="Search…" value={search} onChange={e=>setSearch(e.target.value)} style={{...inp,width:170}}/>
               {can("exportData")&&<button style={btn("var(--text-secondary)")} onClick={exportInventoryCSV}>⬇ Export CSV</button>}
               {can("addMat")&&<button style={btn("var(--accent)")} onClick={()=>openModal("addMat")}>＋ Add Material</button>}
               {can("stockIn")&&<button style={btn("var(--success)")} onClick={()=>openModal("txnIn")}>📥 Stock In</button>}
@@ -1046,7 +1065,12 @@ const save = useCallback(async (key, val) => {
                       <Td c={m.category} color="var(--text-muted)"/>
                       <Td c={m.supplier} color="var(--text-muted)"/>
                       <Td c={m.unit} color="var(--text-muted)"/>
-                      <td style={{padding:"9px 13px",textAlign:"right",fontWeight:700,color:s.color,fontSize:12}}>{fmtN(m.stock)}</td>
+                      <td style={{padding:"9px 13px",textAlign:"right",fontSize:12}}>
+                        <div style={{fontWeight:700,color:s.color}}>{fmtN(m.stock)}</div>
+                        <div style={{marginTop:4,marginLeft:"auto",width:64,height:4,background:"var(--border)",borderRadius:3,overflow:"hidden"}}>
+                          <div style={{height:"100%",width:`${Math.max(5,Math.min(100,(m.threshold>0?(m.stock/(m.threshold*2)):1)*100))}%`,background:s.color,borderRadius:3}}/>
+                        </div>
+                      </td>
                       <td style={{padding:"9px 13px",textAlign:"right",fontSize:12}}>
                         <span style={{display:"flex",alignItems:"center",justifyContent:"flex-end",gap:5}}>
                           {fmtN(m.threshold)}
@@ -1194,7 +1218,7 @@ const save = useCallback(async (key, val) => {
                           <div key={idx} style={{background:run.status==="Completed"?"var(--success-bg)":sufficient?"var(--panel-2)":"var(--danger-bg)",border:`1px solid ${run.status==="Completed"?"var(--success)":sufficient?"var(--border)":"var(--danger)"}`,borderRadius:8,padding:"6px 12px",fontSize:12}}>
                             <span style={{fontWeight:700}}>{m?.name||item.materialId}</span>
                             <span style={{color:"var(--text-muted)",marginLeft:6}}>{fmtN(item.qty)} {m?.unit}</span>
-                            {run.status!=="Completed"&&!sufficient&&<span style={{color:"#ef4444",marginLeft:4,fontWeight:700}}>⚠ low</span>}
+                            {run.status!=="Completed"&&!sufficient&&<span style={{color:"#ef4444",marginLeft:4,fontWeight:700}}>low</span>}
                           </div>
                         );
                       })}
@@ -1231,7 +1255,7 @@ const save = useCallback(async (key, val) => {
                         <div><span style={{color:"var(--text-muted)"}}>Email: </span><a href={`mailto:${s.email}`} style={{color:"#3b82f6",textDecoration:"none"}}>{s.email}</a></div>
                         <div><span style={{color:"var(--text-muted)"}}>Phone: </span>{s.phone}</div>
                       </>
-                    ):<div style={{color:"var(--text-muted)",fontStyle:"italic",fontSize:11}}>🔒 Contact details restricted</div>}
+                    ):<div style={{color:"var(--text-muted)",fontStyle:"italic",fontSize:11}}>Contact details restricted</div>}
                     <div><span style={{color:"var(--text-muted)"}}>Lead Time: </span><b style={{color:"#6366f1"}}>{s.lead} days</b></div>
                     <div><span style={{color:"var(--text-muted)"}}>Materials: </span><span style={{color:"var(--text-secondary)"}}>{s.materials}</span></div>
                   </div>
@@ -1250,7 +1274,7 @@ const save = useCallback(async (key, val) => {
         {/* ══ COST & ANALYTICS ══════════════════════════════════════════════ */}
         {tab==="Cost & Analytics"&&(
           <div>
-            <h2 style={{margin:"0 0 16px",fontSize:20,fontWeight:800,color:"var(--text)"}}>💰 Cost & Analytics</h2>
+            <h2 style={{margin:"0 0 16px",fontSize:20,fontWeight:800,color:"var(--text)"}}>Cost & Analytics</h2>
 
             {/* 4 Metric Cards */}
             <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",gap:14,marginBottom:20}}>
@@ -1326,7 +1350,7 @@ const save = useCallback(async (key, val) => {
 
             {/* 30-Day Inventory Value Trend */}
             <Card style={{padding:20,marginBottom:20}}>
-              <div style={{fontWeight:700,fontSize:14,color:"var(--text)",marginBottom:16}}>📈 30-Day Inventory Value Trend</div>
+              <div style={{fontWeight:700,fontSize:14,color:"var(--text)",marginBottom:16}}>30-Day Inventory Value Trend</div>
               <ResponsiveContainer width="100%" height={220}>
                 <AreaChart data={trendData} margin={{top:5,right:10,left:10,bottom:0}}>
                   <defs>
@@ -1390,7 +1414,7 @@ const save = useCallback(async (key, val) => {
               if (!items.length) return null;
               const cfg = {
                 critical:{bg:"var(--danger-bg)",border:"var(--danger)",color:"var(--danger)",label:"🚨 Critical — Runs out within 7 days"},
-                warning: {bg:"var(--warning-bg)",border:"#fcd34d",color:"#92400e",label:"⚠️ Warning — Runs out within 14 days"},
+                warning: {bg:"var(--warning-bg)",border:"#fcd34d",color:"#92400e",label:"Warning — Runs out within 14 days"},
                 watch:   {bg:"#eff6ff",border:"#93c5fd",color:"#1e40af",label:"👀 Watch — Runs out within 30 days"},
               }[level];
               return(
@@ -1425,9 +1449,9 @@ const save = useCallback(async (key, val) => {
                     const f = m.forecast;
                     const urgCfg = {
                       critical:{color:"#ef4444",bg:"var(--danger-bg)",label:"🚨 Critical"},
-                      warning: {color:"#f59e0b",bg:"var(--warning-bg)",label:"⚠️ Warning"},
+                      warning: {color:"#f59e0b",bg:"var(--warning-bg)",label:"Warning"},
                       watch:   {color:"#3b82f6",bg:"#eff6ff",label:"👀 Watch"},
-                      ok:      {color:"#10b981",bg:"var(--success-bg)",label:"✅ OK"},
+                      ok:      {color:"#10b981",bg:"var(--success-bg)",label:"OK"},
                       "no-data":{color:"var(--text-muted)",bg:"var(--panel-2)",label:"— No data"},
                     }[f.urgency];
                     return(
@@ -1491,7 +1515,7 @@ const save = useCallback(async (key, val) => {
         {/* ══ ADMIN ════════════════════════════════════════════════════════ */}
         {tab==="Admin"&&(
           <div>
-            <h2 style={{margin:"0 0 20px",fontSize:20,fontWeight:800,color:"var(--text)"}}>⚙ Admin Panel</h2>
+            <h2 style={{margin:"0 0 20px",fontSize:20,fontWeight:800,color:"var(--text)"}}>Admin Panel</h2>
 
             {/* User Management (Supabase profiles) */}
             <Card style={{marginBottom:20}}>
@@ -1512,7 +1536,7 @@ const save = useCallback(async (key, val) => {
                       <td style={{padding:"11px 14px",color:"var(--text-secondary)"}}>{u.email||"—"}</td>
                       <td style={{padding:"11px 14px",color:"var(--text-secondary)"}}>{u.phone||"—"}</td>
                       <td style={{padding:"11px 14px"}}>
-                        <select value={u.role} disabled={self} onChange={e=>changeUserRole(u.id,e.target.value)} style={{...inp,width:150,height:40,marginBottom:0,fontSize:12.5,fontWeight:600,border:"0.5px solid var(--accent)",borderRadius:10,opacity:self?0.25:1,cursor:self?"not-allowed":"pointer"}}>
+                        <select value={u.role} disabled={self} onChange={e=>changeUserRole(u.id,e.target.value)} style={{...inp,width:140,height:34,marginBottom:0,opacity:self?0.6:1,cursor:self?"not-allowed":"pointer"}}>
                           <option value="Pending">Pending</option><option value="Viewer">Viewer</option><option value="Warehouse">Warehouse</option><option value="Manager">Manager</option><option value="Admin">Admin</option>
                         </select>
                       </td>
@@ -1525,7 +1549,7 @@ const save = useCallback(async (key, val) => {
             </Card>
 
             {/* Permissions */}
-            <div style={{fontWeight:800,fontSize:14,color:"var(--text)",marginBottom:12}}>🔐 Role Permissions</div>
+            <div style={{fontWeight:800,fontSize:14,color:"var(--text)",marginBottom:12}}>Role Permissions</div>
             <div style={{display:"grid",gap:14,marginBottom:20}}>
               {["Manager","Warehouse","Viewer"].map(role=>{
                 const rp=perms[role]??DEFAULT_PERMS[role];
@@ -1555,7 +1579,7 @@ const save = useCallback(async (key, val) => {
                         ))}
                       </div>
                       <div>
-                        <div style={{fontWeight:700,fontSize:12,color:"var(--text-secondary)",marginBottom:10,paddingBottom:6,borderBottom:"1px solid #f1f5f9"}}>🔒 Data Visibility</div>
+                        <div style={{fontWeight:700,fontSize:12,color:"var(--text-secondary)",marginBottom:10,paddingBottom:6,borderBottom:"1px solid #f1f5f9"}}>Data Visibility</div>
                         {[["viewCosts","Unit Costs & Prices"],["viewContacts","Supplier Contacts"],["viewAllTxn","All Transactions (not just own)"],["viewAuditLog","Audit Log Access"]].map(([key,label])=>(
                           <div key={key} style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
                             <span style={{fontSize:12,color:"var(--text-secondary)"}}>{label}</span>
@@ -1579,7 +1603,7 @@ const save = useCallback(async (key, val) => {
                   <button style={btn("var(--warning)")} onClick={()=>restoreRef.current?.click()}>⬆ Restore from Backup</button>
                   <input ref={restoreRef} type="file" accept=".json" style={{display:"none"}} onChange={handleRestore}/>
                 </div>
-                <div style={{marginTop:12,fontSize:11,color:"var(--text-muted)"}}>⚠ Restoring a backup will replace ALL current data. Make sure to download a backup first.</div>
+                <div style={{marginTop:12,fontSize:11,color:"var(--text-muted)"}}>Restoring a backup will replace ALL current data. Make sure to download a backup first.</div>
               </Card>
             )}
           </div>
@@ -1615,7 +1639,7 @@ const save = useCallback(async (key, val) => {
 
             {/* Add/Edit Material */}
             {(modal==="addMat"||modal==="editMat")&&<>
-              <div style={{fontWeight:800,fontSize:17,marginBottom:18,color:"var(--text)"}}>{modal==="addMat"?"➕ Add Material":"✏️ Edit Material"}</div>
+              <div style={{fontWeight:800,fontSize:17,marginBottom:18,color:"var(--text)"}}>{modal==="addMat"?"➕ Add Material":"Edit Material"}</div>
               <div style={{display:"grid",gap:11}}>
                 <div><Lbl c="Material ID *"/><input placeholder="e.g. RM-009" value={form.id||""} onChange={e=>fset("id",e.target.value)} disabled={modal==="editMat"} style={{...inp,opacity:modal==="editMat"?0.6:1}}/></div>
                 <div><Lbl c="Material Name *"/><input placeholder="Name" value={form.name||""} onChange={e=>fset("name",e.target.value)} style={inp}/></div>
@@ -1646,7 +1670,7 @@ const save = useCallback(async (key, val) => {
 
             {/* Edit Threshold */}
             {modal==="editThreshold"&&<>
-              <div style={{fontWeight:800,fontSize:17,marginBottom:6,color:"var(--text)"}}>✏️ Edit Low Stock Threshold</div>
+              <div style={{fontWeight:800,fontSize:17,marginBottom:6,color:"var(--text)"}}>Edit Low Stock Threshold</div>
               <div style={{fontSize:12,color:"var(--text-muted)",marginBottom:14}}>{target?.name}</div>
               <Lbl c={`Threshold (${target?.unit})`}/>
               <input type="number" min={0} value={form.threshold||""} onChange={e=>fset("threshold",e.target.value)} style={{...inp,marginBottom:14}}/>
@@ -1658,7 +1682,7 @@ const save = useCallback(async (key, val) => {
 
             {/* Add/Edit Supplier */}
             {(modal==="addSup"||modal==="editSup")&&<>
-              <div style={{fontWeight:800,fontSize:17,marginBottom:18,color:"var(--text)"}}>{modal==="addSup"?"➕ Add Supplier":"✏️ Edit Supplier"}</div>
+              <div style={{fontWeight:800,fontSize:17,marginBottom:18,color:"var(--text)"}}>{modal==="addSup"?"➕ Add Supplier":"Edit Supplier"}</div>
               <div style={{display:"grid",gap:11}}>
                 {[["id","Supplier ID *"],["name","Company Name *"],["contact","Contact Person *"],["email","Email *"],["phone","Phone"],["materials","Materials Supplied"]].map(([k,label])=>(
                   <div key={k}><Lbl c={label}/><input placeholder={label} value={form[k]||""} onChange={e=>fset(k,e.target.value)} style={inp}/></div>
@@ -1680,7 +1704,7 @@ const save = useCallback(async (key, val) => {
 
             {/* Add/Edit PO */}
             {(modal==="addPO"||modal==="editPO")&&<>
-              <div style={{fontWeight:800,fontSize:17,marginBottom:18,color:"var(--text)"}}>{modal==="addPO"?"🧾 Create Purchase Order":"✏️ Edit PO"}</div>
+              <div style={{fontWeight:800,fontSize:17,marginBottom:18,color:"var(--text)"}}>{modal==="addPO"?"Create Purchase Order":"Edit PO"}</div>
               <div style={{display:"grid",gap:11}}>
                 <div><Lbl c="PO ID *"/><input value={form.id||""} onChange={e=>fset("id",e.target.value)} style={inp}/></div>
                 <div><Lbl c="Supplier *"/>
@@ -1713,7 +1737,7 @@ const save = useCallback(async (key, val) => {
 
             {/* Add/Edit Production Run */}
             {(modal==="addRun"||modal==="editRun")&&<>
-              <div style={{fontWeight:800,fontSize:17,marginBottom:18,color:"var(--text)"}}>{modal==="addRun"?"🏭 New Production Run":"✏️ Edit Run"}</div>
+              <div style={{fontWeight:800,fontSize:17,marginBottom:18,color:"var(--text)"}}>{modal==="addRun"?"New Production Run":"Edit Run"}</div>
               <div style={{display:"grid",gap:11}}>
                 <div><Lbl c="Run Name *"/><input placeholder="e.g. Production Run #104" value={form.name||""} onChange={e=>fset("name",e.target.value)} style={inp}/></div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
@@ -1752,7 +1776,7 @@ const save = useCallback(async (key, val) => {
 
             {/* Add/Edit User */}
             {(modal==="addUser"||modal==="editUser")&&<>
-              <div style={{fontWeight:800,fontSize:17,marginBottom:18,color:"var(--text)"}}>{modal==="addUser"?"➕ Add User":"✏️ Edit User"}</div>
+              <div style={{fontWeight:800,fontSize:17,marginBottom:18,color:"var(--text)"}}>{modal==="addUser"?"➕ Add User":"Edit User"}</div>
               <div style={{display:"grid",gap:11}}>
                 <div><Lbl c="Full Name *"/><input placeholder="e.g. Ahmed Al-Rashid" value={form.name||""} onChange={e=>fset("name",e.target.value)} style={inp}/></div>
                 <div><Lbl c="Username *"/><input placeholder="e.g. ahmed.rashid" value={form.username||""} onChange={e=>fset("username",e.target.value)} style={inp}/></div>
@@ -1770,7 +1794,7 @@ const save = useCallback(async (key, val) => {
                     }
                   </div>
                 </div>
-                <div style={{display:"flex",gap:20,marginTop:5}}>
+                <div style={{display:"flex",gap:10,marginTop:4}}>
                   <button style={{...btn("var(--accent)"),flex:1}} onClick={()=>submitUser(modal==="editUser")}>{modal==="addUser"?"Create User":"Save Changes"}</button>
                   <button style={btn("var(--panel-2)","var(--text-secondary)")} onClick={closeModal}>Cancel</button>
                 </div>
