@@ -3,8 +3,6 @@
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { LayoutDashboard, Package, ArrowLeftRight, FileText, Factory, Truck, BarChart3, TrendingUp, ScrollText, Settings, Boxes, Bell, CircleHelp, LogOut, Sun, Moon, Monitor, AlertTriangle, RefreshCw, Mail, Lock, Eye, EyeOff, ChevronDown, User, Calendar, Shield, Phone } from "lucide-react";
 import { XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, AreaChart, Area } from "recharts";
-import { ref, set, get } from "firebase/database";
-import { db } from "./firebase";
 import { supabase } from "./supabase";
 import { ROLE_COLORS, ROLE_BADGES, CATEGORIES, UNITS, PO_COLORS, RUN_COLORS, DEFAULT_PERMS, SEED_USERS, SEED_MATERIALS, SEED_SUPPLIERS, SEED_TXN, SEED_POs, SEED_RUNS, SEED_AUDIT } from "./data";
 import { fmtN, fmtC, uid, now, today, fmtTs, stockStatus, getMonthlyData, getForecast, get30DayValueTrend, getCategoryBreakdown, downloadFile, toCSV, CURRENCY, setCurrency } from "./helpers";
@@ -56,6 +54,8 @@ export default function App() {
   const [acctOpen, setAcctOpen] = useState(null);
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   const [profileUsers, setProfileUsers] = useState([]);
+  const [userSearch, setUserSearch] = useState("");
+  const [userRoleFilter, setUserRoleFilter] = useState("All");
   const [settings, setSettings] = useState({companyName:"InventoryOS",currency:"₹",logoUrl:""});
   useEffect(()=>{ document.title = settings.companyName || "Duvidesigns"; },[settings.companyName]);
   useEffect(()=>{
@@ -92,7 +92,7 @@ const save = useCallback(async (key, val) => {
     if (key === "io-perms") {
       await supabase.from("app_config").upsert({ key:"perms", value:val }); return;
     }
-    try { await set(ref(db, "duvidesigns/" + key), JSON.stringify(val)); } catch(e){}
+    // legacy keys (io-users) are managed via Supabase profiles / localStorage — no-op
   }, []);
   const load = useCallback(async (key) => {
     if (key === "io-mats") {
@@ -124,7 +124,12 @@ const save = useCallback(async (key, val) => {
       const { data } = await supabase.from("app_config").select("value").eq("key","perms").maybeSingle();
       return data?.value ?? null;
     }
-    try { const snap = await get(ref(db, "duvidesigns/" + key)); return snap.exists() ? JSON.parse(snap.val()) : null; } catch(e){ return null; }
+    if (key === "io-users") {
+      const { data } = await supabase.from("profiles").select("*");
+      if (!data) return null;
+      return data.map(r=>({ id:r.id, name:r.name, username:r.name, role:r.role, email:r.email, phone:r.phone, gender:r.gender, dob:r.dob }));
+    }
+    return null;
   }, []);
   // ── Boot ───────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -239,18 +244,33 @@ const save = useCallback(async (key, val) => {
 
   async function handleSignup() {
     if (loginF.loading) return;
-    const name=(loginF.name||"").trim(), email=(loginF.username||"").trim();
-    if (!name)  { setLoginF(f=>({...f,error:"Please enter your name."})); return; }
-    if (!email||!loginF.password) { setLoginF(f=>({...f,error:"Email and password are required."})); return; }
+    const firstName=(loginF.firstName||"").trim(), lastName=(loginF.lastName||"").trim();
+    const email=(loginF.username||"").trim(), phone=(loginF.phone||"").trim();
+    const name=`${firstName} ${lastName}`.trim();
+    if (!firstName) { setLoginF(f=>({...f,error:"First name is required."})); return; }
+    if (!lastName)  { setLoginF(f=>({...f,error:"Last name is required."})); return; }
+    if (!email)     { setLoginF(f=>({...f,error:"Email is required."})); return; }
+    if (!phone)     { setLoginF(f=>({...f,error:"Phone number is required."})); return; }
+    if (!loginF.dob){ setLoginF(f=>({...f,error:"Date of birth is required."})); return; }
+    if (!loginF.password)         { setLoginF(f=>({...f,error:"Password is required."})); return; }
     if (loginF.password.length<6) { setLoginF(f=>({...f,error:"Password must be at least 6 characters."})); return; }
     setLoginF(f=>({...f,error:"",info:"",loading:true}));
     const { data, error } = await supabase.auth.signUp({ email, password: loginF.password });
-    if (error) { setLoginF(f=>({...f,error:error.message,loading:false})); return; }
+    if (error) {
+      const dup=/already|registered|exists/i.test(error.message);
+      setLoginF(f=>({...f,error:dup?"This email is already registered — try signing in instead.":error.message,loading:false}));
+      return;
+    }
     if (data?.user?.id) {
-      await supabase.from("profiles").insert({ id:data.user.id, name, email, role:"Pending", phone:(loginF.phone||"").trim()||null, gender:loginF.gender||null, dob:loginF.dob||null });
+      const { error:insErr } = await supabase.from("profiles").insert({ id:data.user.id, name, email, role:"Pending", phone:phone||null, gender:loginF.gender||null, dob:loginF.dob||null });
+      if (insErr) {
+        const dup=/duplicate|unique/i.test(insErr.message);
+        setLoginF(f=>({...f,error:dup?"This email is already registered — try signing in instead.":("Could not save profile: "+insErr.message),loading:false}));
+        return;
+      }
     }
     setAuthView("signin");
-    setLoginF(f=>({...f,password:"",name:"",phone:"",gender:"",dob:"",loading:false,info:"Account created! An admin will assign your access — you can sign in once approved."}));
+    setLoginF(f=>({...f,password:"",firstName:"",lastName:"",name:"",phone:"",gender:"",dob:"",loading:false,info:"Account created! An admin will assign your access — you can sign in once approved."}));
   }
 
   async function handleForgot() {
@@ -798,8 +818,10 @@ const save = useCallback(async (key, val) => {
             <div style={{color:C.tx,fontSize:22,fontWeight:600}}>Create your account</div>
             <div style={{color:C.mut,fontSize:13,marginTop:5,marginBottom:24}}>Request access to Duvi Designs</div>
             {msg}
-            <label style={lblS}>Full name</label>
-            <div style={wrapS}><input type="text" placeholder="Your name" value={loginF.name} onChange={e=>setF("name",e.target.value)} style={inS} autoFocus/></div>
+            <label style={lblS}>First name</label>
+            <div style={wrapS}><input type="text" placeholder="First name" value={loginF.firstName||""} onChange={e=>setF("firstName",e.target.value)} style={inS} autoFocus/></div>
+            <label style={lblS}>Last name</label>
+            <div style={wrapS}><input type="text" placeholder="Last name" value={loginF.lastName||""} onChange={e=>setF("lastName",e.target.value)} style={inS}/></div>
             <label style={lblS}>Email</label>
             <div style={wrapS}><Mail size={17} color={C.mut}/><input type="email" placeholder="you@company.com" value={loginF.username} onChange={e=>setF("username",e.target.value)} style={inS}/></div>
             <label style={lblS}>Phone</label>
@@ -1623,14 +1645,21 @@ const save = useCallback(async (key, val) => {
                 <div style={{fontWeight:600,fontSize:14,color:"var(--text)"}}>User management</div>
                 <div style={{fontSize:12,color:"var(--text-muted)",marginTop:3}}>People sign up themselves. Assign a role to grant access — set to "Pending" to revoke it.</div>
               </div>
+              <div style={{display:"flex",gap:10,padding:"12px 18px",borderBottom:"1px solid var(--border)",flexWrap:"wrap"}}>
+                <input value={userSearch} onChange={e=>setUserSearch(e.target.value)} placeholder="Search name or email…" style={{...inp,flex:1,minWidth:180,marginBottom:0}}/>
+                <select value={userRoleFilter} onChange={e=>setUserRoleFilter(e.target.value)} style={{...inp,width:170,marginBottom:0}}>
+                  <option value="All">All roles</option><option value="Pending">Pending</option><option value="Viewer">Viewer</option><option value="Warehouse">Warehouse</option><option value="Manager">Manager</option><option value="Admin">Admin</option>
+                </select>
+              </div>
               <div style={{overflowX:"auto"}}>
               <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
                 <thead><tr style={{background:"var(--panel-2)"}}>
                   <Th c="Name"/><Th c="Email"/><Th c="Phone"/><Th c="Role"/><Th c="Actions"/>
                 </tr></thead>
                 <tbody>
-                  {profileUsers.length===0&&<tr><td colSpan={5} style={{padding:"16px 18px",color:"var(--text-muted)"}}>No users yet.</td></tr>}
-                  {profileUsers.map(u=>{ const self=u.id===session.user.id; const pending=u.role==="Pending"; return (
+                  {(()=>{ const q=userSearch.trim().toLowerCase(); const fu=profileUsers.filter(u=>(userRoleFilter==="All"||u.role===userRoleFilter)&&(q===""||((u.name||"")+" "+(u.email||"")).toLowerCase().includes(q)));
+                    if(fu.length===0) return <tr><td colSpan={5} style={{padding:"16px 18px",color:"var(--text-muted)"}}>{profileUsers.length===0?"No users yet.":"No users match your search."}</td></tr>;
+                    return fu.map(u=>{ const self=u.id===session.user.id; const pending=u.role==="Pending"; return (
                     <tr key={u.id} style={{background:pending?"var(--warning-bg)":"transparent",borderTop:"1px solid var(--border)"}}>
                       <td style={{padding:"11px 14px",fontWeight:600,color:"var(--text)"}}>{u.name||"—"} {self&&<span style={{fontSize:10,color:"var(--text-muted)",fontWeight:400}}>(you)</span>}</td>
                       <td style={{padding:"11px 14px",color:"var(--text-secondary)"}}>{u.email||"—"}</td>
@@ -1642,7 +1671,7 @@ const save = useCallback(async (key, val) => {
                       </td>
                       <td style={{padding:"11px 14px"}}>{!self&&<button onClick={()=>removeProfile(u.id)} style={{...btn("var(--danger-bg)","var(--danger)","5px 12px"),fontSize:11}}>Remove</button>}</td>
                     </tr>
-                  );})}
+                  );}); })()}
                 </tbody>
               </table>
               </div>

@@ -29,9 +29,9 @@
 
 [data-theme="dark"] {
   /* Dark theme — forest green */
-  --bg: #273826;
-  --panel: #57564875;
-  --panel-2: #637153;
+  --bg: #141b13;
+  --panel: #1c251a;
+  --panel-2: #232f21;
   --border: rgba(175,215,165,0.11);
   --text: #eef3ea;
   --text-secondary: #bcc8b6;
