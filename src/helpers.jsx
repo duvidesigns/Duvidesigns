@@ -99,7 +99,8 @@ export function downloadFile(content, filename, type = "text/csv") {
 }
 
 export function toCSV(rows, cols) {
-  const header = cols.map(c=>c.label).join(",");
-  const body   = rows.map((r)=>cols.map(c=>{ const v=r[c.key]??""; return typeof v==="string"&&v.includes(",") ? `"${v}"` : v; }).join(",")).join("\n");
+  const esc = (v) => { v=(v??"").toString(); return /[",\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v; };
+  const header = cols.map(c=>esc(c.label)).join(",");
+  const body   = rows.map((r)=>cols.map(c=>esc(r[c.key])).join(",")).join("\n");
   return header+"\n"+body;
 }

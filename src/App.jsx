@@ -57,6 +57,7 @@ export default function App() {
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   const [profileUsers, setProfileUsers] = useState([]);
   const [settings, setSettings] = useState({companyName:"InventoryOS",currency:"₹",logoUrl:""});
+  useEffect(()=>{ document.title = settings.companyName || "Duvidesigns"; },[settings.companyName]);
   useEffect(()=>{
     try { localStorage.setItem("io-theme", theme); } catch(e){}
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
@@ -142,7 +143,7 @@ const save = useCallback(async (key, val) => {
       const { data: supData } = await supabase.from("suppliers").select("*");
       setSups(supData||[]);
       const { data: cfg } = await supabase.from("app_config").select("value").eq("key","settings").maybeSingle();
-      if (cfg?.value) { setSettings(s=>({...s,...cfg.value})); setCurrency(cfg.value.currency); }
+      if (cfg?.value) { setSettings(s=>({...s,...cfg.value})); }
       setLoading(false);
     })();
   },[]);
@@ -314,14 +315,17 @@ const save = useCallback(async (key, val) => {
   useEffect(()=>{ if (session && tab==="Admin") loadProfiles(); },[tab, session]);
 
   async function saveSettings(next) {
-    setSettings(next); setCurrency(next.currency);
+    setSettings(next);
     await supabase.from("app_config").upsert({ key:"settings", value:next });
     toast$("Settings saved ✓");
   }
   function parseCSV(text) {
+    text = text.replace(/^\uFEFF/, "");
     const lines = text.replace(/\r/g,"").split("\n").filter(l=>l.trim());
     if (!lines.length) return [];
-    const split = (line)=>{ const out=[]; let cur="",q=false; for(let i=0;i<line.length;i++){ const c=line[i]; if(c==='"'){ if(q&&line[i+1]==='"'){cur+='"';i++;} else q=!q; } else if(c===","&&!q){ out.push(cur); cur=""; } else cur+=c; } out.push(cur); return out; };
+    const head = lines[0];
+    const delim = (head.split(";").length > head.split(",").length) ? ";" : (head.split("\t").length > head.split(",").length ? "\t" : ",");
+    const split = (line)=>{ const out=[]; let cur="",q=false; for(let i=0;i<line.length;i++){ const c=line[i]; if(c==='"'){ if(q&&line[i+1]==='"'){cur+='"';i++;} else q=!q; } else if(c===delim&&!q){ out.push(cur); cur=""; } else cur+=c; } out.push(cur); return out; };
     const headers = split(lines[0]).map(h=>h.trim().toLowerCase());
     return lines.slice(1).map(l=>{ const cells=split(l); const o={}; headers.forEach((h,i)=>o[h]=(cells[i]??"").trim()); return o; });
   }
@@ -601,6 +605,48 @@ const save = useCallback(async (key, val) => {
     ]);
     downloadFile(csv,`transactions_${today()}.csv`);
     toast$("Transactions exported ✓");
+  }
+  function exportPOCSV() {
+    const rows=pos.map(o=>({ ...o, supplierName:sups.find(s=>s.id===o.supplierId)?.name||o.supplierId||"", materialName:mats.find(m=>m.id===o.materialId)?.name||o.materialId||"" }));
+    const csv=toCSV(rows,[
+      {label:"ID",key:"id"},{label:"Date",key:"date"},{label:"Supplier",key:"supplierName"},{label:"Material",key:"materialName"},
+      {label:"Qty",key:"qty"},{label:"Unit Cost",key:"unitCost"},{label:"Status",key:"status"},
+      {label:"Expected",key:"expectedDate"},{label:"Received",key:"receivedDate"},{label:"Notes",key:"notes"},
+    ]);
+    downloadFile(csv,`purchase_orders_${today()}.csv`); toast$("Purchase orders exported ✓");
+  }
+  function exportRunCSV() {
+    const rows=runs.map(r=>({ ...r, itemsSummary:(r.items||[]).map(i=>`${mats.find(m=>m.id===i.materialId)?.name||i.materialId}: ${i.qty}`).join(" | "), by:users.find(u=>u.id===r.userId)?.name||"" }));
+    const csv=toCSV(rows,[
+      {label:"ID",key:"id"},{label:"Date",key:"date"},{label:"Name",key:"name"},{label:"Reference",key:"ref"},
+      {label:"Status",key:"status"},{label:"Items",key:"itemsSummary"},{label:"By",key:"by"},{label:"Notes",key:"notes"},
+    ]);
+    downloadFile(csv,`production_runs_${today()}.csv`); toast$("Production runs exported ✓");
+  }
+  function exportSupplierCSV() {
+    const csv=toCSV(sups,[
+      {label:"ID",key:"id"},{label:"Name",key:"name"},{label:"Contact",key:"contact"},{label:"Email",key:"email"},
+      {label:"Phone",key:"phone"},{label:"Lead Time",key:"lead"},{label:"Materials",key:"materials"},{label:"Status",key:"status"},
+    ]);
+    downloadFile(csv,`suppliers_${today()}.csv`); toast$("Suppliers exported ✓");
+  }
+  async function importSuppliersCSV(e) {
+    const file=e.target.files?.[0]; if(e.target) e.target.value=""; if(!file) return;
+    const rows=parseCSV(await file.text());
+    if(!rows.length){ toast$("No rows found in CSV"); return; }
+    const imported=rows.map(r=>({
+      id:(r.id||("SUP-"+uid())).toString().trim(), name:r.name||"", contact:r.contact||"",
+      email:r.email||"", phone:r.phone||"", lead:Number(r["lead time"]||r.lead)||0,
+      materials:r.materials||"", status:r.status||"Active",
+    })).filter(s=>s.name);
+    if(!imported.length){ toast$("No valid rows — need at least a Name column"); return; }
+    const map=new Map(sups.map(s=>[s.id,s]));
+    imported.forEach(s=>map.set(s.id,{...map.get(s.id),...s}));
+    await supabase.from("suppliers").upsert(imported);
+    setSups([...map.values()]);
+    const entry=addAuditEntry("CSV_IMPORT","Supplier","-",`Imported ${imported.length} supplier(s) from CSV`);
+    const newA=[entry,...audit].slice(0,500); setAudit(newA); save("io-audit",newA);
+    toast$(`Imported ${imported.length} supplier(s) ✓`);
   }
 
   // ── Backup / Restore ─────────────────────────────────────────────────────────
@@ -954,8 +1000,8 @@ const save = useCallback(async (key, val) => {
         </header>
 
         {showSettings && (
-          <div onClick={()=>setShowSettings(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:120,padding:20}}>
-            <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:440,background:"var(--panel)",border:"1px solid var(--border)",borderRadius:16,maxHeight:"90vh",overflowY:"auto"}}>
+          <div onClick={()=>setShowSettings(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:120,padding:20}}>
+            <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:440,background:"var(--panel)",border:"1px solid var(--border)",borderRadius:16,boxShadow:"0 24px 70px rgba(0,0,0,0.55)",maxHeight:"90vh",overflowY:"auto"}}>
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"16px 18px",borderBottom:"1px solid var(--border)",position:"sticky",top:0,background:"var(--panel)",zIndex:1}}>
                 <div style={{fontSize:16,fontWeight:600,color:"var(--text)"}}>Account settings</div>
                 <button onClick={()=>setShowSettings(false)} style={{background:"transparent",border:"none",cursor:"pointer",color:"var(--text-muted)",fontSize:22,lineHeight:1}}>&times;</button>
@@ -1181,6 +1227,7 @@ const save = useCallback(async (key, val) => {
           <div>
             <SectionBar title="Purchase Orders">
               {["All","Pending","Received","Closed"].map(f=><button key={f} style={{...btn(poFilter===f?"#0f172a":"var(--border)",poFilter===f?"#fff":"var(--text-secondary)")}} onClick={()=>setPoFilter(f)}>{f}</button>)}
+              {can("exportData")&&<button style={btn("var(--text-secondary)")} onClick={exportPOCSV}>⬇ Export CSV</button>}
               {can("createPO")&&<button style={btn("var(--accent)")} onClick={()=>openModal("addPO")}>＋ Create PO</button>}
             </SectionBar>
             <Card style={{overflow:"auto"}}>
@@ -1228,6 +1275,7 @@ const save = useCallback(async (key, val) => {
           <div>
             <SectionBar title="Production Runs">
               {["All","Planned","In Progress","Completed"].map(f=><button key={f} style={{...btn(runFilter===f?"#0f172a":"var(--border)",runFilter===f?"#fff":"var(--text-secondary)")}} onClick={()=>setRunFilter(f)}>{f}</button>)}
+              {can("exportData")&&<button style={btn("var(--text-secondary)")} onClick={exportRunCSV}>⬇ Export CSV</button>}
               {can("createRun")&&<button style={btn("var(--accent)")} onClick={()=>openModal("addRun")}>＋ New Run</button>}
             </SectionBar>
             <div style={{display:"grid",gap:14}}>
@@ -1274,6 +1322,8 @@ const save = useCallback(async (key, val) => {
         {tab==="Suppliers"&&(
           <div>
             <SectionBar title="Suppliers">
+              {can("exportData")&&<button style={btn("var(--text-secondary)")} onClick={exportSupplierCSV}>⬇ Export CSV</button>}
+              {can("addSup")&&<><input id="io-sup-csv" type="file" accept=".csv" style={{display:"none"}} onChange={importSuppliersCSV}/><button style={btn("var(--text-secondary)")} onClick={()=>document.getElementById("io-sup-csv").click()}>⬆ Import CSV</button></>}
               {can("addSup")&&<button style={btn("var(--accent)")} onClick={()=>openModal("addSup")}>＋ Add Supplier</button>}
             </SectionBar>
             <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(290px,1fr))",gap:14}}>
@@ -1342,7 +1392,7 @@ const save = useCallback(async (key, val) => {
                   <div style={{display:"flex",alignItems:"center",gap:20}}>
                     <ResponsiveContainer width={160} height={160}>
                       <PieChart>
-                        <Pie data={categoryData} cx="50%" cy="50%" innerRadius={45} outerRadius={72} dataKey="value" paddingAngle={3}>
+                        <Pie data={categoryData} cx="50%" cy="50%" innerRadius={45} outerRadius={72} dataKey="value" paddingAngle={3} isAnimationActive={true} animationDuration={1000}>
                           {categoryData.map((entry,i)=>(
                             <Cell key={i} fill={["#6366f1","#3b82f6","#10b981","#f59e0b","#f43f5e","#8b5cf6","#06b6d4"][i%7]}/>
                           ))}
@@ -1561,8 +1611,7 @@ const save = useCallback(async (key, val) => {
                 <div style={{fontSize:12,color:"var(--text-muted)",marginTop:3}}>Branding and currency used across the whole app.</div>
               </div>
               <div style={{padding:"16px 18px",display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
-                <div><Lbl c="Company name"/><input value={settings.companyName} onChange={e=>setSettings(s=>({...s,companyName:e.target.value}))} style={inp}/></div>
-                <div><Lbl c="Currency symbol"/><input value={settings.currency} onChange={e=>setSettings(s=>({...s,currency:e.target.value}))} maxLength={3} style={inp}/></div>
+                <div style={{gridColumn:"1 / -1"}}><Lbl c="Company name"/><input value={settings.companyName} onChange={e=>setSettings(s=>({...s,companyName:e.target.value}))} style={inp}/></div>
                 <div style={{gridColumn:"1 / -1"}}><Lbl c="Logo URL (optional)"/><input value={settings.logoUrl} onChange={e=>setSettings(s=>({...s,logoUrl:e.target.value}))} placeholder="https://…/logo.png" style={inp}/></div>
               </div>
               <div style={{padding:"0 18px 16px"}}><button style={btn("var(--accent)")} onClick={()=>saveSettings(settings)}>Save settings</button></div>
@@ -1587,7 +1636,7 @@ const save = useCallback(async (key, val) => {
                       <td style={{padding:"11px 14px",color:"var(--text-secondary)"}}>{u.email||"—"}</td>
                       <td style={{padding:"11px 14px",color:"var(--text-secondary)"}}>{u.phone||"—"}</td>
                       <td style={{padding:"11px 14px"}}>
-                        <select value={u.role} disabled={self} onChange={e=>changeUserRole(u.id,e.target.value)} style={{...inp,width:140,height:34,marginBottom:0,opacity:self?0.6:1,cursor:self?"not-allowed":"pointer"}}>
+                        <select value={u.role} disabled={self} onChange={e=>changeUserRole(u.id,e.target.value)} style={{...inp,width:175,height:40,marginBottom:0,opacity:self?0.6:1,cursor:self?"not-allowed":"pointer"}}>
                           <option value="Pending">Pending</option><option value="Viewer">Viewer</option><option value="Warehouse">Warehouse</option><option value="Manager">Manager</option><option value="Admin">Admin</option>
                         </select>
                       </td>
