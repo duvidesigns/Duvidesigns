@@ -1337,8 +1337,11 @@ const save = useCallback(async (key, val) => {
                   <Card key={run.id} style={{padding:18}}>
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12,flexWrap:"wrap",gap:8}}>
                       <div>
-                        <div style={{fontWeight:800,fontSize:15,color:"var(--text)"}}>{run.name}</div>
-                        <div style={{fontSize:12,color:"var(--text-muted)",marginTop:2}}>{run.date} · {run.ref} · <span style={{color:ROLE_COLORS[u?.role]||"var(--text-muted)"}}>{u?.name||"—"}</span></div>
+                        <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                          <div style={{fontWeight:800,fontSize:15,color:"var(--text)"}}>{run.name}</div>
+                          <span style={{fontSize:11,color:"#6366f1",fontWeight:700,fontFamily:"monospace"}}>{run.id}</span>
+                        </div>
+                        <div style={{fontSize:12,color:"var(--text-muted)",marginTop:2}}>{run.date} · {run.ref} · by <span style={{color:ROLE_COLORS[u?.role]||"var(--text-muted)",fontWeight:600}}>{u?.name||"—"}</span></div>
                         {run.notes&&<div style={{fontSize:11,color:"var(--text-muted)",marginTop:2}}>{run.notes}</div>}
                       </div>
                       <div style={{display:"flex",gap:8,alignItems:"center"}}>
