@@ -426,7 +426,7 @@ const save = useCallback(async (key, val) => {
     const qty=parseInt(form.qty);
     if (!mat||!qty||qty<=0) { toast$("Fill all fields","err"); return; }
     if (type==="out"&&qty>mat.stock) { toast$(`Only ${mat.stock} ${mat.unit} in stock`,"err"); return; }
-    const tx={id:`TXN-${uid()}`,date:today(),materialId:form.materialId,type:type.toUpperCase(),qty,ref:form.ref||"Manual Entry",userId:session.user.id,source:"manual"};
+    const tx={id:nextId("TXN",txns),date:today(),materialId:form.materialId,type:type.toUpperCase(),qty,ref:form.ref||"Manual Entry",userId:session.user.id,source:"manual"};
     const newTxns=[tx,...txns];
     const newMats=mats.map(x=>x.id===form.materialId?{...x,stock:type==="in"?x.stock+qty:x.stock-qty}:x);
     const entry=addAuditEntry(type==="in"?"STOCK_IN":"STOCK_OUT","Material",form.materialId,`Stock ${type.toUpperCase()} · ${qty} ${mat.unit} · ${mat.name}`);
@@ -515,7 +515,7 @@ const save = useCallback(async (key, val) => {
   async function receivePO(po) {
     const mat=mats.find(m=>m.id===po.materialId);
     if (!mat) { toast$("Material not found","err"); return; }
-    const tx={id:`TXN-${uid()}`,date:today(),materialId:po.materialId,type:"IN",qty:po.qty,ref:po.id,userId:session.user.id,source:"po"};
+    const tx={id:nextId("TXN",txns),date:today(),materialId:po.materialId,type:"IN",qty:po.qty,ref:po.id,userId:session.user.id,source:"po"};
     const newTxns=[tx,...txns];
     const newMats=mats.map(m=>m.id===po.materialId?{...m,stock:m.stock+po.qty}:m);
     const newPos=pos.map(p=>p.id===po.id?{...p,status:"Received",receivedDate:today()}:p);
@@ -554,7 +554,8 @@ const save = useCallback(async (key, val) => {
   async function completeRun(run) {
     const insufficients = run.items.filter(item=>{ const m=mats.find(x=>x.id===item.materialId); return !m||m.stock<item.qty; });
     if (insufficients.length>0) { toast$(`Insufficient stock for: ${insufficients.map(i=>mats.find(m=>m.id===i.materialId)?.name||i.materialId).join(", ")}`,"err"); return; }
-    const newTxList=run.items.map(item=>({ id:`TXN-${uid()}`, date:today(), materialId:item.materialId, type:"OUT", qty:item.qty, ref:run.id, userId:session.user.id, source:"run" }));
+    const startN=parseInt(nextId("TXN",txns).split("-")[1],10);
+    const newTxList=run.items.map((item,idx)=>({ id:`TXN-${String(startN+idx).padStart(3,"0")}`, date:today(), materialId:item.materialId, type:"OUT", qty:item.qty, ref:run.id, userId:session.user.id, source:"run" }));
     const newTxns=[...newTxList,...txns];
     const newMats=mats.map(m=>{ const item=run.items.find(i=>i.materialId===m.id); return item?{...m,stock:m.stock-item.qty}:m; });
     const newRuns=runs.map(r=>r.id===run.id?{...r,status:"Completed"}:r);
@@ -701,13 +702,18 @@ const save = useCallback(async (key, val) => {
   }
 
   // ── Modal helpers ────────────────────────────────────────────────────────────
+  function nextId(prefix, list) {
+    let max=0;
+    (list||[]).forEach(it=>{ const m=String(it?.id||"").match(new RegExp("^"+prefix+"-(\\d+)$")); if(m){ const n=parseInt(m[1],10); if(n>max) max=n; } });
+    return `${prefix}-${String(max+1).padStart(3,"0")}`;
+  }
   function openModal(type, tgt=null) {
     setTarget(tgt);
     if (type==="txnIn"||type==="txnOut") setForm({materialId:"",qty:"",ref:""});
-    if (type==="addMat")   setForm({id:"",name:"",category:"Metal",supplier:"",unit:"kg",stock:"",threshold:"",unitCost:""});
+    if (type==="addMat")   setForm({id:nextId("RM",mats),name:"",category:"Metal",supplier:"",unit:"kg",stock:"",threshold:"",unitCost:""});
     if (type==="editMat")  setForm({...tgt});
     if (type==="editThreshold") setForm({threshold:tgt.threshold});
-    if (type==="addSup")   setForm({id:"",name:"",contact:"",email:"",phone:"",lead:"",materials:"",status:"Active"});
+    if (type==="addSup")   setForm({id:nextId("SUP",sups),name:"",contact:"",email:"",phone:"",lead:"",materials:"",status:"Active"});
     if (type==="editSup")  setForm({...tgt});
     if (type==="addPO")    setForm({id:`PO-${uid()}`,supplierId:"",materialId:"",qty:"",unitCost:"",expectedDate:"",notes:"",status:"Pending"});
     if (type==="editPO")   setForm({...tgt});
@@ -1222,12 +1228,15 @@ const save = useCallback(async (key, val) => {
                 <thead><tr>
                   <Th c="TXN ID"/><Th c="Date"/><Th c="Material"/><Th c="Type"/><Th c="Qty" right/>
                   {data("viewCosts")&&<><Th c="Unit Cost" right/><Th c="Total" right/></>}
-                  <Th c="Reference"/><Th c="Source"/><Th c="By"/>
+                  <Th c="Reference"/><Th c="Source"/><Th c="From → To"/><Th c="By"/>
                 </tr></thead>
                 <tbody>
                   {visibleTxn.map((tx,i)=>{
                     const m=mats.find(x=>x.id===tx.materialId);
                     const u=users.find(x=>x.id===tx.userId);
+                    const flow = tx.type==="IN"
+                      ? `${tx.source==="po" ? (sups.find(s=>s.id===pos.find(p=>p.id===tx.ref)?.supplierId)?.name||"Supplier") : tx.source==="manual" ? "Manual" : "Opening"} → Inventory`
+                      : `Inventory → ${tx.source==="run" ? (runs.find(r=>r.id===tx.ref)?.name||"Production") : "Manual"}`;
                     return(
                       <tr key={tx.id} style={{background:i%2===0?"var(--panel-2)":"var(--panel)"}}>
                         <Td c={tx.id} color="#6366f1" style={{fontSize:11}}/>
@@ -1241,6 +1250,7 @@ const save = useCallback(async (key, val) => {
                         </>}
                         <Td c={tx.ref} color="var(--text-muted)"/>
                         <td style={{padding:"9px 13px"}}><Badge label={tx.source||"manual"} color={tx.source==="po"?"#3b82f6":tx.source==="run"?"#8b5cf6":"var(--text-muted)"} bg={tx.source==="po"?"#eff6ff":tx.source==="run"?"#f5f3ff":"var(--panel-2)"}/></td>
+                        <Td c={flow} color="var(--text-secondary)" style={{fontSize:11}}/>
                         <td style={{padding:"9px 13px"}}><span style={{background:ROLE_COLORS[u?.role]+"18",color:ROLE_COLORS[u?.role]||"var(--text-muted)",borderRadius:6,padding:"2px 8px",fontSize:11,fontWeight:700}}>{u?.name||"—"}</span></td>
                       </tr>
                     );
@@ -1767,7 +1777,7 @@ const save = useCallback(async (key, val) => {
             {(modal==="addMat"||modal==="editMat")&&<>
               <div style={{fontWeight:800,fontSize:17,marginBottom:18,color:"var(--text)"}}>{modal==="addMat"?"➕ Add Material":"Edit Material"}</div>
               <div style={{display:"grid",gap:11}}>
-                <div><Lbl c="Material ID *"/><input placeholder="e.g. RM-009" value={form.id||""} onChange={e=>fset("id",e.target.value)} disabled={modal==="editMat"} style={{...inp,opacity:modal==="editMat"?0.6:1}}/></div>
+                <div><Lbl c="Material ID"/><input value={form.id||""} readOnly title="Auto-generated" style={{...inp,opacity:0.7,cursor:"not-allowed"}}/></div>
                 <div><Lbl c="Material Name *"/><input placeholder="Name" value={form.name||""} onChange={e=>fset("name",e.target.value)} style={inp}/></div>
                 <div><Lbl c="Supplier *"/><input placeholder="Supplier name" value={form.supplier||""} onChange={e=>fset("supplier",e.target.value)} style={inp}/></div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
@@ -1811,7 +1821,7 @@ const save = useCallback(async (key, val) => {
               <div style={{fontWeight:800,fontSize:17,marginBottom:18,color:"var(--text)"}}>{modal==="addSup"?"➕ Add Supplier":"Edit Supplier"}</div>
               <div style={{display:"grid",gap:11}}>
                 {[["id","Supplier ID *"],["name","Company Name *"],["contact","Contact Person *"],["email","Email *"],["phone","Phone"],["materials","Materials Supplied"]].map(([k,label])=>(
-                  <div key={k}><Lbl c={label}/><input placeholder={label} value={form[k]||""} onChange={e=>fset(k,e.target.value)} style={inp}/></div>
+                  <div key={k}><Lbl c={k==="id"?"Supplier ID":label}/><input placeholder={label} value={form[k]||""} onChange={e=>fset(k,e.target.value)} readOnly={k==="id"} title={k==="id"?"Auto-generated":undefined} style={{...inp,...(k==="id"?{opacity:0.7,cursor:"not-allowed"}:{})}}/></div>
                 ))}
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
                   <div><Lbl c="Lead Time (days)"/><input type="number" min={1} value={form.lead||""} onChange={e=>fset("lead",e.target.value)} style={inp}/></div>
