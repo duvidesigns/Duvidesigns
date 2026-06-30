@@ -300,6 +300,22 @@ const save = useCallback(async (key, val) => {
     setLoginF(f=>({...f,password:"",loading:false,info:"Password updated! You can sign in now."}));
   }
 
+  async function uploadAvatar(e) {
+    const file=e.target.files?.[0]; if(e.target) e.target.value=""; if(!file) return;
+    if(!file.type.startsWith("image/")){ setAcct(x=>({...x,error:"Please choose an image file.",info:""})); return; }
+    if(file.size>3*1024*1024){ setAcct(x=>({...x,error:"Image must be under 3 MB.",info:""})); return; }
+    setAcct(x=>({...x,error:"",info:"",loading:true}));
+    const ext=(file.name.split(".").pop()||"png").toLowerCase();
+    const path=`${session.user.id}.${ext}`;
+    const { error:upErr } = await supabase.storage.from("avatars").upload(path,file,{upsert:true,contentType:file.type});
+    if(upErr){ setAcct(x=>({...x,error:"Upload failed: "+upErr.message,loading:false})); return; }
+    const { data:pub } = supabase.storage.from("avatars").getPublicUrl(path);
+    const url=pub.publicUrl+"?t="+Date.now();
+    const { error:dbErr } = await supabase.from("profiles").update({ avatar_url:url }).eq("id",session.user.id);
+    if(dbErr){ setAcct(x=>({...x,error:"Image saved but profile update failed: "+dbErr.message,loading:false})); return; }
+    setSession(s=>({...s,user:{...s.user,avatarUrl:url}}));
+    setAcct(x=>({...x,info:"Profile picture updated.",loading:false}));
+  }
   async function saveProfile(fields, okMsg) {
     setAcct(x=>({...x,error:"",info:"",loading:true}));
     const { error } = await supabase.from("profiles").update(fields).eq("id", session.user.id);
@@ -404,7 +420,7 @@ const save = useCallback(async (key, val) => {
       setLoginF(f=>({...f,error:"No profile found for this account. Contact an admin.",loading:false})); return;
     }
     // 3) Build the app session
-    const u = { id:authData.user.id, name:profile.name, role:profile.role, email:authData.user.email, phone:profile.phone||"", gender:profile.gender||"", dob:profile.dob||"" };
+    const u = { id:authData.user.id, name:profile.name, role:profile.role, email:authData.user.email, phone:profile.phone||"", gender:profile.gender||"", dob:profile.dob||"", avatarUrl:profile.avatar_url||"" };
     const p = perms[u.role]??DEFAULT_PERMS[u.role];
     const sess = { user:u, perms:p };
     setSession(sess);
@@ -1019,7 +1035,7 @@ const save = useCallback(async (key, val) => {
             </div>
           </>)}
           <div style={{display:"flex",alignItems:"center",gap:10,padding:"6px"}}>
-            <button onClick={()=>setShowProfileMenu(v=>!v)} title="Open menu" style={{width:32,height:32,borderRadius:"50%",background:"var(--sidebar-active-bg)",color:"var(--sidebar-text)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:600,flexShrink:0,border:"none",cursor:"pointer",fontFamily:"inherit"}}>{user.name.charAt(0)}</button>
+            <button onClick={()=>setShowProfileMenu(v=>!v)} title="Open menu" style={{width:32,height:32,borderRadius:"50%",background:"var(--sidebar-active-bg)",color:"var(--sidebar-text)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:600,flexShrink:0,border:"none",cursor:"pointer",fontFamily:"inherit",overflow:"hidden",padding:0}}>{user.avatarUrl?<img src={user.avatarUrl} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>:user.name.charAt(0)}</button>
             <div style={{flex:1,minWidth:0,lineHeight:1.3}}>
               <div style={{fontSize:12,fontWeight:500,color:"var(--sidebar-text)",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{user.name}</div>
               <div style={{fontSize:11,color:"var(--sidebar-muted)",display:"flex",alignItems:"center",gap:5}}><span style={{width:6,height:6,borderRadius:"50%",background:ROLE_COLORS[user.role],display:"inline-block"}}></span>{user.role}</div>
@@ -1053,6 +1069,16 @@ const save = useCallback(async (key, val) => {
               {(acct.error||acct.info)&&<div style={{padding:"12px 18px 0"}}><div style={{background:acct.error?"var(--danger-bg)":"var(--success-bg)",color:acct.error?"var(--danger)":"var(--success)",borderRadius:8,padding:"9px 12px",fontSize:12,fontWeight:500}}>{acct.error||acct.info}</div></div>}
 
               <div style={stSec}>Profile</div>
+              <div style={{display:"flex",alignItems:"center",gap:14,padding:"14px 18px"}}>
+                {user.avatarUrl
+                  ? <img src={user.avatarUrl} alt="avatar" style={{width:56,height:56,borderRadius:"50%",objectFit:"cover",border:"2px solid var(--border)"}}/>
+                  : <div style={{width:56,height:56,borderRadius:"50%",background:"var(--accent-soft)",color:"var(--accent)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,fontWeight:700}}>{user.name.charAt(0)}</div>}
+                <div>
+                  <div style={{fontSize:13,fontWeight:600,color:"var(--text)"}}>Profile picture</div>
+                  <input id="io-avatar-input" type="file" accept="image/*" style={{display:"none"}} onChange={uploadAvatar}/>
+                  <button onClick={()=>document.getElementById("io-avatar-input").click()} style={{...btn("var(--accent-soft)","var(--accent)","6px 12px"),fontSize:12,marginTop:6}}>{acct.loading?"Uploading…":"Change photo"}</button>
+                </div>
+              </div>
               <button style={stRow} onClick={()=>setAcctOpen(o=>o==="name"?null:"name")}><User size={18} color="var(--text-secondary)"/><div style={stMain}><div style={stLabel}>Display name</div><div style={stVal}>{user.name}</div></div><ChevronDown size={16} color="var(--text-muted)" style={{transform:acctOpen==="name"?"rotate(180deg)":"none"}}/></button>
               {acctOpen==="name"&&<div style={stExp}><input value={acct.name} onChange={e=>setAcct(x=>({...x,name:e.target.value,error:"",info:""}))} style={{...inp,marginTop:10}}/><button onClick={()=>{ const n=(acct.name||"").trim(); if(!n){setAcct(x=>({...x,error:"Name can't be empty."}));return;} saveProfile({name:n},"Name updated."); }} style={stSave}>{acct.loading?"Saving…":"Save"}</button></div>}
               <div style={stRowRo}><Mail size={18} color="var(--text-secondary)"/><div style={stMain}><div style={stLabel}>Email</div><div style={stVal}>{user.email}</div></div><span style={stTag}>Login email</span></div>
