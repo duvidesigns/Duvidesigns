@@ -10,6 +10,14 @@ export const Lbl  = ({c})  => <label style={{display:"block",fontWeight:500,font
 export const Card = ({children,style={}}) => <div style={{background:"var(--panel)",borderRadius:14,border:"1px solid var(--border)",boxShadow:"0 1px 2px rgba(0,0,0,0.05), 0 10px 26px rgba(0,0,0,0.10)",overflow:"hidden",...style}}>{children}</div>;
 export const Th   = ({c,right}) => <th style={{padding:"10px 14px",textAlign:right?"right":"left",fontWeight:500,fontSize:11,letterSpacing:"0.03em",textTransform:"uppercase",whiteSpace:"nowrap",color:"var(--text-muted)",background:"var(--panel-2)",borderBottom:"1px solid var(--border)"}}>{c}</th>;
 export const Td   = ({c,right,bold,color,style={}}) => <td style={{padding:"10px 14px",textAlign:right?"right":"left",fontWeight:bold?600:400,color:color||"var(--text)",fontSize:13,borderBottom:"1px solid var(--border)",...style}}>{c}</td>;
+export function SortTh({label,k,sort,setSort,right}) {
+  const active = sort && sort.key===k;
+  const arrow = !active ? "⇅" : (sort.dir==="asc" ? "▲" : "▼");
+  return <th onClick={()=>setSort(s=>({key:k, dir: s.key===k && s.dir==="asc" ? "desc" : "asc"}))}
+    style={{padding:"10px 14px",textAlign:right?"right":"left",fontWeight:500,fontSize:11,letterSpacing:"0.03em",textTransform:"uppercase",whiteSpace:"nowrap",color:active?"var(--accent)":"var(--text-muted)",background:"var(--panel-2)",borderBottom:"1px solid var(--border)",cursor:"pointer",userSelect:"none"}}>
+    {label} <span style={{opacity:active?1:0.35,fontSize:9}}>{arrow}</span>
+  </th>;
+}
 export function Badge({label,color,bg}) { return <span style={{background:bg,color,borderRadius:6,padding:"3px 9px",fontSize:11,fontWeight:600,whiteSpace:"nowrap"}}>{label}</span>; }
 export function RoleBadge({role}) { return <Badge label={role} color={ROLE_COLORS[role]} bg={ROLE_COLORS[role]+"22"}/>; }
 export function Toggle({on,onChange}) {
@@ -30,15 +38,26 @@ export function EmptyState({icon,msg}) {
   </div>;
 }
 
-export function Pager({ page, setPage, total, pageSize = 50 }) {
+export function Pager({ page, setPage, total, pageSize = 50, setPageSize }) {
   const pages = Math.max(1, Math.ceil(total / pageSize));
-  if (total <= pageSize) return null;
+  if (total <= 25 && !setPageSize) return null;
   const b = { background:"var(--panel-2)", border:"1px solid var(--border)", borderRadius:7, padding:"5px 12px", fontSize:12, color:"var(--text)", fontFamily:"inherit" };
   return (
-    <div style={{ display:"flex", alignItems:"center", justifyContent:"flex-end", gap:12, padding:"10px 16px" }}>
-      <button onClick={()=>setPage(p=>Math.max(1,p-1))} disabled={page<=1} style={{...b, opacity:page<=1?0.4:1, cursor:page<=1?"default":"pointer"}}>‹ Prev</button>
-      <span style={{ fontSize:12, color:"var(--text-secondary)" }}>Page {page} of {pages} · {total} total</span>
-      <button onClick={()=>setPage(p=>Math.min(pages,p+1))} disabled={page>=pages} style={{...b, opacity:page>=pages?0.4:1, cursor:page>=pages?"default":"pointer"}}>Next ›</button>
+    <div style={{ display:"flex", alignItems:"center", justifyContent:"flex-end", gap:12, padding:"10px 16px", flexWrap:"wrap" }}>
+      {setPageSize && (
+        <span style={{ fontSize:12, color:"var(--text-secondary)", display:"flex", alignItems:"center", gap:6 }}>
+          Rows
+          <select value={pageSize} onChange={e=>{ setPageSize(Number(e.target.value)); setPage(1); }} style={{...b, padding:"4px 8px", cursor:"pointer"}}>
+            {[25,50,100].map(n=><option key={n} value={n}>{n}</option>)}
+          </select>
+        </span>
+      )}
+      {total > pageSize && <>
+        <button onClick={()=>setPage(p=>Math.max(1,p-1))} disabled={page<=1} style={{...b, opacity:page<=1?0.4:1, cursor:page<=1?"default":"pointer"}}>‹ Prev</button>
+        <span style={{ fontSize:12, color:"var(--text-secondary)" }}>Page {page} of {pages} · {total} total</span>
+        <button onClick={()=>setPage(p=>Math.min(pages,p+1))} disabled={page>=pages} style={{...b, opacity:page>=pages?0.4:1, cursor:page>=pages?"default":"pointer"}}>Next ›</button>
+      </>}
+      {total <= pageSize && <span style={{ fontSize:12, color:"var(--text-secondary)" }}>{total} total</span>}
     </div>
   );
 }

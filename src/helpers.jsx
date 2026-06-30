@@ -104,3 +104,19 @@ export function toCSV(rows, cols) {
   const body   = rows.map((r)=>cols.map(c=>esc(r[c.key])).join(",")).join("\n");
   return header+"\n"+body;
 }
+
+// Generic table sort. `accessors` maps a column key → a function returning the sortable value.
+export function sortRows(rows, sort, accessors) {
+  if (!sort || !sort.key) return rows;
+  const acc = accessors[sort.key];
+  if (!acc) return rows;
+  const dir = sort.dir === "asc" ? 1 : -1;
+  return [...rows].sort((a, b) => {
+    let x = acc(a), y = acc(b);
+    if (x == null && y == null) return 0;
+    if (x == null) return 1;
+    if (y == null) return -1;
+    if (typeof x === "number" && typeof y === "number") return (x - y) * dir;
+    return String(x).localeCompare(String(y), undefined, { numeric: true }) * dir;
+  });
+}

@@ -74,6 +74,10 @@ button { font-family: inherit; }
 table { border-collapse: collapse; }
 tbody tr { transition: background .12s ease; }
 tbody tr:hover { background: var(--accent-soft) !important; }
+/* tabular figures so numeric columns line up */
+td, th { font-variant-numeric: tabular-nums; }
+/* sticky header — pins column titles while the table body scrolls */
+thead th { position: sticky; top: 0; z-index: 3; }
 
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 8px; }

@@ -5,8 +5,8 @@ import { LayoutDashboard, Package, ArrowLeftRight, FileText, Factory, Truck, Bar
 import { XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, AreaChart, Area } from "recharts";
 import { supabase } from "./supabase";
 import { ROLE_COLORS, ROLE_BADGES, CATEGORIES, UNITS, PO_COLORS, RUN_COLORS, DEFAULT_PERMS, SEED_USERS, SEED_MATERIALS, SEED_SUPPLIERS, SEED_TXN, SEED_POs, SEED_RUNS, SEED_AUDIT } from "./data";
-import { fmtN, fmtC, uid, now, today, fmtTs, stockStatus, getMonthlyData, getForecast, get30DayValueTrend, getCategoryBreakdown, downloadFile, toCSV, CURRENCY, setCurrency } from "./helpers";
-import { inp, btn, Lbl, Card, Th, Td, Badge, RoleBadge, Toggle, SectionBar, EmptyState, Pager } from "./components";
+import { fmtN, fmtC, uid, now, today, fmtTs, stockStatus, getMonthlyData, getForecast, get30DayValueTrend, getCategoryBreakdown, downloadFile, toCSV, sortRows, CURRENCY, setCurrency } from "./helpers";
+import { inp, btn, Lbl, Card, Th, Td, Badge, RoleBadge, Toggle, SectionBar, EmptyState, Pager, SortTh } from "./components";
 
 // ═════════════════════════════════════════════════════════════════════════════
 // MAIN APP
@@ -45,7 +45,17 @@ export default function App() {
   const [showNotif,setShowNotif]= useState(false);
   const [poFilter, setPoFilter] = useState("All");
   const [runFilter,setRunFilter]= useState("All");
-  const PAGE=50;
+  const [invSort,setInvSort]=useState({key:null,dir:"asc"});
+  const [txnSort,setTxnSort]=useState({key:null,dir:"asc"});
+  const [poSort,setPoSort]=useState({key:null,dir:"asc"});
+  const [invStat,setInvStat]=useState("All");
+  const [supSearch,setSupSearch]=useState("");
+  const [supStat,setSupStat]=useState("All");
+  const [PAGE,setPAGE]=useState(50);
+  const [txnType,setTxnType]=useState("All");
+  const [txnSearch,setTxnSearch]=useState("");
+  const [audSearch,setAudSearch]=useState("");
+  const [audAction,setAudAction]=useState("All");
   const [invPage,setInvPage]=useState(1);
   const [txnPage,setTxnPage]=useState(1);
   const [poPage,setPoPage]=useState(1);
@@ -756,7 +766,7 @@ const save = useCallback(async (key, val) => {
   const totalCostOut = txns.filter(t=>t.type==="OUT").reduce((s,t)=>{ const m=mats.find(x=>x.id===t.materialId); return s+(m?m.unitCost*t.qty:0); },0);
   const todayCostIn  = txns.filter(t=>t.type==="IN"&&t.date===today()).reduce((s,t)=>{ const m=mats.find(x=>x.id===t.materialId); return s+(m?m.unitCost*t.qty:0); },0);
   const todayCostOut = txns.filter(t=>t.type==="OUT"&&t.date===today()).reduce((s,t)=>{ const m=mats.find(x=>x.id===t.materialId); return s+(m?m.unitCost*t.qty:0); },0);
-  const forecasts    = useMemo(()=>mats.map(m=>({...m, forecast:getForecast(m,txns,sups)})),[mats,txns,sups]);
+  const forecasts    = useMemo(()=>{ const rank={critical:0,warning:1,watch:2,ok:3,"no-data":4}; return mats.map(m=>({...m, forecast:getForecast(m,txns,sups)})).sort((a,b)=>{ const ra=rank[a.forecast.urgency]??5, rb=rank[b.forecast.urgency]??5; if(ra!==rb)return ra-rb; return (a.forecast.daysLeft??1e9)-(b.forecast.daysLeft??1e9); }); },[mats,txns,sups]);
   const categoryData = useMemo(()=>getCategoryBreakdown(mats),[mats]);
   const trendData    = useMemo(()=>get30DayValueTrend(txns,mats),[txns,mats]);
   const top5Mats     = useMemo(()=>[...mats].sort((a,b)=>b.stock*b.unitCost-a.stock*a.unitCost).slice(0,5),[mats]);
@@ -765,6 +775,26 @@ const save = useCallback(async (key, val) => {
     return data("viewAllTxn")?sorted:sorted.filter(t=>t.userId===session?.user?.id);
   },[txns,session,perms]);
   const filteredMats = useMemo(()=>mats.filter(m=>!search||m.name.toLowerCase().includes(search.toLowerCase())||m.id.toLowerCase().includes(search.toLowerCase())),[mats,search]);
+  const invView = useMemo(()=>{ let r=filteredMats; if(invStat==="Low")r=r.filter(m=>m.stock>0&&m.stock<=m.threshold); else if(invStat==="Out")r=r.filter(m=>m.stock<=0); return sortRows(r,invSort,{id:m=>m.id,name:m=>m.name,category:m=>m.category,supplier:m=>m.supplier,stock:m=>m.stock,threshold:m=>m.threshold,unitCost:m=>m.unitCost,value:m=>m.stock*m.unitCost}); },[filteredMats,invStat,invSort]);
+  const txnView = useMemo(()=>{
+    let r=visibleTxn;
+    if(txnType!=="All") r=r.filter(t=>t.type===txnType);
+    if(txnSearch){ const q=txnSearch.toLowerCase(); r=r.filter(t=>{ const m=mats.find(x=>x.id===t.materialId); return (t.id+" "+(m?.name||t.materialId)+" "+(t.ref||"")).toLowerCase().includes(q); }); }
+    return sortRows(r,txnSort,{id:t=>t.id,date:t=>t.date,type:t=>t.type,qty:t=>t.qty});
+  },[visibleTxn,txnSort,txnType,txnSearch,mats]);
+  const audView = useMemo(()=>{
+    let r=[...audit].sort((a,b)=>b.ts.localeCompare(a.ts));
+    if(audAction!=="All") r=r.filter(e=>e.action===audAction);
+    if(audSearch){ const q=audSearch.toLowerCase(); r=r.filter(e=>((e.userName||"")+" "+(e.details||"")+" "+(e.entity||"")+" "+(e.action||"")).toLowerCase().includes(q)); }
+    return r;
+  },[audit,audAction,audSearch]);
+  const supActivity = useMemo(()=>{
+    const mm=new Map(), pp=new Map();
+    mats.forEach(m=>{ if(m.supplier) mm.set(m.supplier,(mm.get(m.supplier)||0)+1); });
+    pos.forEach(p=>{ if(p.status==="Pending") pp.set(p.supplierId,(pp.get(p.supplierId)||0)+1); });
+    return { mm, pp };
+  },[mats,pos]);
+  const supView = useMemo(()=>sups.filter(s=>(supStat==="All"||s.status===supStat)&&(!supSearch||((s.name||"")+" "+(s.contact||"")+" "+(s.email||"")).toLowerCase().includes(supSearch.toLowerCase()))),[sups,supStat,supSearch]);
   const monthlyData  = useMemo(()=>getMonthlyData(txns,mats),[txns,mats]);
   const fmtCompact = (n) => { n=Number(n)||0; const neg=n<0; n=Math.abs(n); let r; if(n>=1e7) r=CURRENCY+(n/1e7).toFixed(2)+" Cr"; else if(n>=1e5) r=CURRENCY+(n/1e5).toFixed(2)+" L"; else if(n>=1e3) r=CURRENCY+(n/1e3).toFixed(1)+"K"; else r=CURRENCY+n.toFixed(0); return (neg?"-":"")+r; };
   const healthSplit = useMemo(()=>{
@@ -1198,22 +1228,23 @@ const save = useCallback(async (key, val) => {
           <div>
             <SectionBar title="Inventory">
               <input placeholder="Search…" value={search} onChange={e=>setSearch(e.target.value)} style={{...inp,width:170}}/>
+              <div style={{display:"flex",gap:6}}>{["All","Low","Out"].map(f=><button key={f} onClick={()=>{setInvStat(f);setInvPage(1);}} style={{...btn(invStat===f?"#0f172a":"var(--border)",invStat===f?"#fff":"var(--text-secondary)","6px 12px"),fontSize:12}}>{f}</button>)}</div>
               {can("exportData")&&<button style={btn("var(--text-secondary)")} onClick={exportInventoryCSV}>⬇ Export CSV</button>}
               {can("addMat")&&<><input id="io-csv-input" type="file" accept=".csv" style={{display:"none"}} onChange={importInventoryCSV}/><button style={btn("var(--text-secondary)")} onClick={()=>document.getElementById("io-csv-input").click()}>⬆ Import CSV</button></>}
               {can("addMat")&&<button style={btn("var(--accent)")} onClick={()=>openModal("addMat")}>＋ Add Material</button>}
               {can("stockIn")&&<button style={btn("var(--success)")} onClick={()=>openModal("txnIn")}>📥 Stock In</button>}
               {can("stockOut")&&<button style={btn("var(--danger)")} onClick={()=>openModal("txnOut")}>📤 Stock Out</button>}
             </SectionBar>
-            <Card style={{overflow:"auto"}}>
+            <Card style={{overflow:"auto",maxHeight:"calc(100vh - 210px)"}}>
               <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
                 <thead><tr>
-                  <Th c="ID"/><Th c="Material"/><Th c="Category"/><Th c="Supplier"/><Th c="Unit"/>
-                  <Th c="Stock" right/><Th c="Threshold" right/><Th c="Status"/>
-                  {data("viewCosts")&&<><Th c="Unit Cost" right/><Th c="Stock Value" right/></>}
+                  <SortTh label="ID" k="id" sort={invSort} setSort={setInvSort}/><SortTh label="Material" k="name" sort={invSort} setSort={setInvSort}/><SortTh label="Category" k="category" sort={invSort} setSort={setInvSort}/><SortTh label="Supplier" k="supplier" sort={invSort} setSort={setInvSort}/><Th c="Unit"/>
+                  <SortTh label="Stock" k="stock" sort={invSort} setSort={setInvSort} right/><SortTh label="Threshold" k="threshold" sort={invSort} setSort={setInvSort} right/><Th c="Status"/>
+                  {data("viewCosts")&&<><SortTh label="Unit Cost" k="unitCost" sort={invSort} setSort={setInvSort} right/><SortTh label="Stock Value" k="value" sort={invSort} setSort={setInvSort} right/></>}
                   <Th c="Actions"/>
                 </tr></thead>
                 <tbody>
-                  {filteredMats.slice((invPage-1)*PAGE,invPage*PAGE).map((m,i)=>{const s=stockStatus(m.stock,m.threshold); return(
+                  {invView.slice((invPage-1)*PAGE,invPage*PAGE).map((m,i)=>{const s=stockStatus(m.stock,m.threshold); return(
                     <tr key={m.id} style={{background:i%2===0?"var(--panel-2)":"var(--panel)"}}>
                       <Td c={m.id} color="#3b82f6" bold style={{fontSize:11}}/>
                       <Td c={m.name} bold/>
@@ -1243,9 +1274,15 @@ const save = useCallback(async (key, val) => {
                     </tr>
                   );})}
                 </tbody>
+                {data("viewCosts")&&invView.length>0&&<tfoot><tr style={{background:"var(--panel-2)",fontWeight:800,position:"sticky",bottom:0}}>
+                  <td colSpan={7} style={{padding:"10px 14px",fontSize:12,color:"var(--text-secondary)"}}>{invView.length} item{invView.length!==1?"s":""} shown</td>
+                  <td style={{padding:"10px 14px",textAlign:"right",fontSize:12,color:"var(--text-muted)"}}>Total value →</td>
+                  <td style={{padding:"10px 14px",textAlign:"right",fontSize:13,color:"var(--accent)"}}>{fmtC(invView.reduce((s,m)=>s+m.stock*m.unitCost,0))}</td>
+                  <td/>
+                </tr></tfoot>}
               </table>
-              {filteredMats.length===0&&<EmptyState icon="📦" msg="No materials found"/>}
-              <Pager page={invPage} setPage={setInvPage} total={filteredMats.length}/>
+              {invView.length===0&&<EmptyState icon="📦" msg="No materials found"/>}
+              <Pager page={invPage} setPage={setInvPage} total={invView.length} pageSize={PAGE} setPageSize={setPAGE}/>
             </Card>
           </div>
         )}
@@ -1254,19 +1291,21 @@ const save = useCallback(async (key, val) => {
         {tab==="Transactions"&&(
           <div>
             <SectionBar title={<>Transactions {!data("viewAllTxn")&&<span style={{fontSize:12,color:"var(--text-muted)",fontWeight:400}}>(your entries only)</span>}</>}>
+              <input placeholder="Search…" value={txnSearch} onChange={e=>{setTxnSearch(e.target.value);setTxnPage(1);}} style={{...inp,width:160}}/>
+              <div style={{display:"flex",gap:6}}>{["All","IN","OUT"].map(f=><button key={f} onClick={()=>{setTxnType(f);setTxnPage(1);}} style={{...btn(txnType===f?"#0f172a":"var(--border)",txnType===f?"#fff":"var(--text-secondary)","6px 12px"),fontSize:12}}>{f}</button>)}</div>
               {can("exportData")&&<button style={btn("var(--text-secondary)")} onClick={exportTxnCSV}>⬇ Export CSV</button>}
               {can("stockIn")&&<button style={btn("var(--success)")} onClick={()=>openModal("txnIn")}>📥 Stock In</button>}
               {can("stockOut")&&<button style={btn("var(--danger)")} onClick={()=>openModal("txnOut")}>📤 Stock Out</button>}
             </SectionBar>
-            <Card style={{overflow:"auto"}}>
+            <Card style={{overflow:"auto",maxHeight:"calc(100vh - 210px)"}}>
               <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
                 <thead><tr>
-                  <Th c="TXN ID"/><Th c="Date"/><Th c="Material"/><Th c="Type"/><Th c="Qty" right/>
+                  <SortTh label="TXN ID" k="id" sort={txnSort} setSort={setTxnSort}/><SortTh label="Date" k="date" sort={txnSort} setSort={setTxnSort}/><Th c="Material"/><SortTh label="Type" k="type" sort={txnSort} setSort={setTxnSort}/><SortTh label="Qty" k="qty" sort={txnSort} setSort={setTxnSort} right/>
                   {data("viewCosts")&&<><Th c="Unit Cost" right/><Th c="Total" right/></>}
                   <Th c="Reference"/><Th c="Source"/><Th c="From → To"/><Th c="By"/>
                 </tr></thead>
                 <tbody>
-                  {visibleTxn.slice((txnPage-1)*PAGE,txnPage*PAGE).map((tx,i)=>{
+                  {txnView.slice((txnPage-1)*PAGE,txnPage*PAGE).map((tx,i)=>{
                     const m=mats.find(x=>x.id===tx.materialId);
                     const u=users.find(x=>x.id===tx.userId);
                     const flow = tx.type==="IN"
@@ -1293,7 +1332,7 @@ const save = useCallback(async (key, val) => {
                 </tbody>
               </table>
               {visibleTxn.length===0&&<EmptyState icon="📋" msg="No transactions yet"/>}
-              <Pager page={txnPage} setPage={setTxnPage} total={visibleTxn.length}/>
+              <Pager page={txnPage} setPage={setTxnPage} total={txnView.length} pageSize={PAGE} setPageSize={setPAGE}/>
             </Card>
           </div>
         )}
@@ -1306,15 +1345,15 @@ const save = useCallback(async (key, val) => {
               {can("exportData")&&<button style={btn("var(--text-secondary)")} onClick={exportPOCSV}>⬇ Export CSV</button>}
               {can("createPO")&&<button style={btn("var(--accent)")} onClick={()=>openModal("addPO")}>＋ Create PO</button>}
             </SectionBar>
-            <Card style={{overflow:"auto"}}>
+            <Card style={{overflow:"auto",maxHeight:"calc(100vh - 210px)"}}>
               <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
                 <thead><tr>
-                  <Th c="PO ID"/><Th c="Date"/><Th c="Supplier"/><Th c="Material"/><Th c="Qty" right/>
-                  {data("viewCosts")&&<Th c="PO Value" right/>}
-                  <Th c="Expected"/><Th c="Status"/><Th c="Actions"/>
+                  <SortTh label="PO ID" k="id" sort={poSort} setSort={setPoSort}/><SortTh label="Date" k="date" sort={poSort} setSort={setPoSort}/><SortTh label="Supplier" k="supplier" sort={poSort} setSort={setPoSort}/><SortTh label="Material" k="material" sort={poSort} setSort={setPoSort}/><SortTh label="Qty" k="qty" sort={poSort} setSort={setPoSort} right/>
+                  {data("viewCosts")&&<SortTh label="PO Value" k="value" sort={poSort} setSort={setPoSort} right/>}
+                  <SortTh label="Expected" k="expected" sort={poSort} setSort={setPoSort}/><SortTh label="Status" k="status" sort={poSort} setSort={setPoSort}/><Th c="Actions"/>
                 </tr></thead>
                 <tbody>
-                  {pos.filter(p=>poFilter==="All"||p.status===poFilter).slice((poPage-1)*PAGE,poPage*PAGE).map((po,i)=>{
+                  {sortRows(pos.filter(p=>poFilter==="All"||p.status===poFilter),poSort,{id:p=>p.id,date:p=>p.date,supplier:p=>sups.find(s=>s.id===p.supplierId)?.name||p.supplierId,material:p=>mats.find(m=>m.id===p.materialId)?.name||p.materialId,qty:p=>p.qty,value:p=>p.qty*p.unitCost,expected:p=>p.expectedDate,status:p=>p.status}).slice((poPage-1)*PAGE,poPage*PAGE).map((po,i)=>{
                     const mat=mats.find(m=>m.id===po.materialId);
                     const sup=sups.find(s=>s.id===po.supplierId);
                     const c=PO_COLORS[po.status]||"var(--text-muted)";
@@ -1326,7 +1365,7 @@ const save = useCallback(async (key, val) => {
                         <Td c={mat?.name||po.materialId} bold/>
                         <Td c={`${fmtN(po.qty)} ${mat?.unit||""}`} right bold/>
                         {data("viewCosts")&&<Td c={fmtC(po.qty*po.unitCost)} right bold color="#6366f1"/>}
-                        <Td c={po.expectedDate} color="var(--text-muted)"/>
+                        <td style={{padding:"9px 13px",fontSize:12}}>{po.status==="Pending"&&po.expectedDate&&po.expectedDate<today()?<span style={{color:"var(--danger)",fontWeight:700}}>{po.expectedDate} · overdue</span>:<span style={{color:"var(--text-muted)"}}>{po.expectedDate}</span>}</td>
                         <td style={{padding:"9px 13px"}}><Badge label={po.status} color={c} bg={c+"18"}/></td>
                         <td style={{padding:"9px 13px"}}>
                           <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
@@ -1342,7 +1381,7 @@ const save = useCallback(async (key, val) => {
                 </tbody>
               </table>
               {pos.filter(p=>poFilter==="All"||p.status===poFilter).length===0&&<EmptyState icon="🧾" msg="No purchase orders found"/>}
-              <Pager page={poPage} setPage={setPoPage} total={pos.filter(p=>poFilter==="All"||p.status===poFilter).length}/>
+              <Pager page={poPage} setPage={setPoPage} total={pos.filter(p=>poFilter==="All"||p.status===poFilter).length} pageSize={PAGE} setPageSize={setPAGE}/>
             </Card>
           </div>
         )}
@@ -1367,7 +1406,7 @@ const save = useCallback(async (key, val) => {
                           <div style={{fontWeight:800,fontSize:15,color:"var(--text)"}}>{run.name}</div>
                           <span style={{fontSize:11,color:"#6366f1",fontWeight:700,fontFamily:"monospace"}}>{run.id}</span>
                         </div>
-                        <div style={{fontSize:12,color:"var(--text-muted)",marginTop:2}}>{run.date} · {run.ref} · by <span style={{color:ROLE_COLORS[u?.role]||"var(--text-muted)",fontWeight:600}}>{u?.name||"—"}</span></div>
+                        <div style={{fontSize:12,color:"var(--text-muted)",marginTop:2}}>{run.date} · {run.ref} · by <span style={{color:ROLE_COLORS[u?.role]||"var(--text-muted)",fontWeight:600}}>{u?.name||"—"}</span> · <span style={{color:"var(--text-secondary)"}}>{(run.items||[]).length} material{(run.items||[]).length!==1?"s":""}</span></div>
                         {run.notes&&<div style={{fontSize:11,color:"var(--text-muted)",marginTop:2}}>{run.notes}</div>}
                       </div>
                       <div style={{display:"flex",gap:8,alignItems:"center"}}>
@@ -1394,7 +1433,7 @@ const save = useCallback(async (key, val) => {
                 );
               })}
               {runs.filter(r=>runFilter==="All"||r.status===runFilter).length===0&&<EmptyState icon="🏭" msg="No production runs found"/>}
-              <Pager page={runPage} setPage={setRunPage} total={runs.filter(r=>runFilter==="All"||r.status===runFilter).length}/>
+              <Pager page={runPage} setPage={setRunPage} total={runs.filter(r=>runFilter==="All"||r.status===runFilter).length} pageSize={PAGE} setPageSize={setPAGE}/>
             </div>
           </div>
         )}
@@ -1403,12 +1442,14 @@ const save = useCallback(async (key, val) => {
         {tab==="Suppliers"&&(
           <div>
             <SectionBar title="Suppliers">
+              <input placeholder="Search…" value={supSearch} onChange={e=>setSupSearch(e.target.value)} style={{...inp,width:170}}/>
+              <select value={supStat} onChange={e=>setSupStat(e.target.value)} style={{...inp,width:130,cursor:"pointer"}}><option value="All">All status</option><option value="Active">Active</option><option value="Inactive">Inactive</option></select>
               {can("exportData")&&<button style={btn("var(--text-secondary)")} onClick={exportSupplierCSV}>⬇ Export CSV</button>}
               {can("addSup")&&<><input id="io-sup-csv" type="file" accept=".csv" style={{display:"none"}} onChange={importSuppliersCSV}/><button style={btn("var(--text-secondary)")} onClick={()=>document.getElementById("io-sup-csv").click()}>⬆ Import CSV</button></>}
               {can("addSup")&&<button style={btn("var(--accent)")} onClick={()=>openModal("addSup")}>＋ Add Supplier</button>}
             </SectionBar>
             <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(290px,1fr))",gap:14}}>
-              {sups.map(s=>(
+              {supView.map(s=>(
                 <Card key={s.id} style={{padding:18}}>
                   <div style={{display:"flex",alignItems:"flex-start",gap:12,marginBottom:12}}>
                     <div style={{width:40,height:40,background:"#eff6ff",borderRadius:9,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}}>🏢</div>
@@ -1428,6 +1469,16 @@ const save = useCallback(async (key, val) => {
                     ):<div style={{color:"var(--text-muted)",fontStyle:"italic",fontSize:11}}>Contact details restricted</div>}
                     <div><span style={{color:"var(--text-muted)"}}>Lead Time: </span><b style={{color:"#6366f1"}}>{s.lead} days</b></div>
                     <div><span style={{color:"var(--text-muted)"}}>Materials: </span><span style={{color:"var(--text-secondary)"}}>{s.materials}</span></div>
+                  </div>
+                  <div style={{display:"flex",gap:8,marginBottom:12}}>
+                    <div style={{flex:1,background:"var(--panel-2)",borderRadius:8,padding:"7px 10px",textAlign:"center"}}>
+                      <div style={{fontSize:16,fontWeight:800,color:"var(--accent)"}}>{supActivity.mm.get(s.name)||0}</div>
+                      <div style={{fontSize:10,color:"var(--text-muted)"}}>materials</div>
+                    </div>
+                    <div style={{flex:1,background:"var(--panel-2)",borderRadius:8,padding:"7px 10px",textAlign:"center"}}>
+                      <div style={{fontSize:16,fontWeight:800,color:(supActivity.pp.get(s.id)||0)>0?"var(--warning)":"var(--text)"}}>{supActivity.pp.get(s.id)||0}</div>
+                      <div style={{fontSize:10,color:"var(--text-muted)"}}>open POs</div>
+                    </div>
                   </div>
                   {(can("editSup")||can("delSup"))&&(
                     <div style={{display:"flex",gap:8}}>
@@ -1539,7 +1590,7 @@ const save = useCallback(async (key, val) => {
             </Card>
 
             {/* Material Cost Breakdown Table */}
-            <Card style={{overflow:"auto"}}>
+            <Card style={{overflow:"auto",maxHeight:"calc(100vh - 210px)"}}>
               <div style={{padding:"12px 16px",borderBottom:"1px solid #f1f5f9",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                 <span style={{fontWeight:700,fontSize:14,color:"var(--text)"}}>Material Cost Breakdown</span>
                 {can("exportData")&&<button style={{...btn("var(--text-secondary)","#fff","5px 12px"),fontSize:11}} onClick={exportInventoryCSV}>⬇ Export CSV</button>}
@@ -1603,7 +1654,7 @@ const save = useCallback(async (key, val) => {
             })}
 
             {/* Forecast Table */}
-            <Card style={{overflow:"auto"}}>
+            <Card style={{overflow:"auto",maxHeight:"calc(100vh - 210px)"}}>
               <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
                 <thead><tr>
                   <Th c="Material"/>
@@ -1652,16 +1703,17 @@ const save = useCallback(async (key, val) => {
         {tab==="Audit Log"&&(
           <div>
             <SectionBar title="Audit Log">
-              <span style={{fontSize:12,color:"var(--text-muted)",fontWeight:400,alignSelf:"center"}}>Complete history of all actions</span>
+              <input placeholder="Search…" value={audSearch} onChange={e=>{setAudSearch(e.target.value);setAudPage(1);}} style={{...inp,width:160}}/>
+              <select value={audAction} onChange={e=>{setAudAction(e.target.value);setAudPage(1);}} style={{...inp,width:150,cursor:"pointer"}}><option value="All">All actions</option>{[...new Set(audit.map(x=>x.action))].sort().map(ac=><option key={ac} value={ac}>{ac}</option>)}</select>
               {can("exportData")&&<button style={btn("var(--text-secondary)")} onClick={()=>{ const csv=toCSV(audit,[{label:"ID",key:"id"},{label:"Timestamp",key:"ts"},{label:"User",key:"userName"},{label:"Role",key:"userRole"},{label:"Action",key:"action"},{label:"Entity",key:"entity"},{label:"Details",key:"details"}]); downloadFile(csv,`audit_${today()}.csv`); toast$("Audit log exported ✓"); }}>⬇ Export</button>}
             </SectionBar>
-            <Card style={{overflow:"auto"}}>
+            <Card style={{overflow:"auto",maxHeight:"calc(100vh - 210px)"}}>
               <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
                 <thead><tr>
                   <Th c="Timestamp"/><Th c="User"/><Th c="Action"/><Th c="Entity"/><Th c="Details"/>
                 </tr></thead>
                 <tbody>
-                  {[...audit].sort((a,b)=>b.ts.localeCompare(a.ts)).slice((audPage-1)*PAGE,audPage*PAGE).map((entry,i)=>(
+                  {audView.slice((audPage-1)*PAGE,audPage*PAGE).map((entry,i)=>(
                     <tr key={entry.id} style={{background:i%2===0?"var(--panel-2)":"var(--panel)"}}>
                       <Td c={fmtTs(entry.ts)} color="var(--text-muted)" style={{fontSize:11,whiteSpace:"nowrap"}}/>
                       <td style={{padding:"9px 13px"}}>
@@ -1677,8 +1729,8 @@ const save = useCallback(async (key, val) => {
                   ))}
                 </tbody>
               </table>
-              {audit.length===0&&<EmptyState icon="🔍" msg="No audit entries yet"/>}
-              <Pager page={audPage} setPage={setAudPage} total={audit.length}/>
+              {audView.length===0&&<EmptyState icon="🔍" msg="No matching audit entries"/>}
+              <Pager page={audPage} setPage={setAudPage} total={audView.length} pageSize={PAGE} setPageSize={setPAGE}/>
             </Card>
           </div>
         )}
@@ -1726,7 +1778,7 @@ const save = useCallback(async (key, val) => {
                 </tbody>
               </table>
               </div>
-              <Pager page={usrPage} setPage={setUsrPage} total={fUsers.length}/>
+              <Pager page={usrPage} setPage={setUsrPage} total={fUsers.length} pageSize={PAGE} setPageSize={setPAGE}/>
             </Card>
           </div>
           );})()}
