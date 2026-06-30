@@ -6,7 +6,7 @@ import { XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pi
 import { supabase } from "./supabase";
 import { ROLE_COLORS, ROLE_BADGES, CATEGORIES, UNITS, PO_COLORS, RUN_COLORS, DEFAULT_PERMS, SEED_USERS, SEED_MATERIALS, SEED_SUPPLIERS, SEED_TXN, SEED_POs, SEED_RUNS, SEED_AUDIT } from "./data";
 import { fmtN, fmtC, uid, now, today, fmtTs, stockStatus, getMonthlyData, getForecast, get30DayValueTrend, getCategoryBreakdown, downloadFile, toCSV, CURRENCY, setCurrency } from "./helpers";
-import { inp, btn, Lbl, Card, Th, Td, Badge, RoleBadge, Toggle, SectionBar, EmptyState } from "./components";
+import { inp, btn, Lbl, Card, Th, Td, Badge, RoleBadge, Toggle, SectionBar, EmptyState, Pager } from "./components";
 
 // ═════════════════════════════════════════════════════════════════════════════
 // MAIN APP
@@ -14,7 +14,7 @@ import { inp, btn, Lbl, Card, Th, Td, Badge, RoleBadge, Toggle, SectionBar, Empt
 const TAB_ICONS = {
   "Dashboard":LayoutDashboard, "Inventory":Package, "Transactions":ArrowLeftRight,
   "Purchase Orders":FileText, "Production Runs":Factory, "Suppliers":Truck,
-  "Cost & Analytics":BarChart3, "Forecasting":TrendingUp, "Audit Log":ScrollText, "Admin":Settings,
+  "Cost & Analytics":BarChart3, "Forecasting":TrendingUp, "Audit Log":ScrollText, "Users":User, "Admin":Settings,
 };
 
 export default function App() {
@@ -45,6 +45,13 @@ export default function App() {
   const [showNotif,setShowNotif]= useState(false);
   const [poFilter, setPoFilter] = useState("All");
   const [runFilter,setRunFilter]= useState("All");
+  const PAGE=50;
+  const [invPage,setInvPage]=useState(1);
+  const [txnPage,setTxnPage]=useState(1);
+  const [poPage,setPoPage]=useState(1);
+  const [runPage,setRunPage]=useState(1);
+  const [audPage,setAudPage]=useState(1);
+  const [usrPage,setUsrPage]=useState(1);
   const [theme,    setTheme]    = useState(()=>{ try { return localStorage.getItem("io-theme")||"system"; } catch(e){ return "system"; } });
   const [clock, setClock] = useState(new Date());
   useEffect(()=>{ const t=setInterval(()=>setClock(new Date()),1000); return ()=>clearInterval(t); },[]);
@@ -542,7 +549,7 @@ const save = useCallback(async (key, val) => {
     if (!form.name||!form.date) { toast$("Fill all required fields","err"); return; }
     const items=(form.items||[]).filter(i=>i.materialId&&parseInt(i.qty)>0);
     if (items.length===0) { toast$("Add at least one material","err"); return; }
-    const run={ id:isEdit?target.id:`RUN-${uid()}`, date:form.date, name:form.name, ref:form.ref||"", items:items.map(i=>({materialId:i.materialId,qty:parseInt(i.qty)})), userId:session.user.id, status:form.status||"Planned", notes:form.notes||"" };
+    const run={ id:isEdit?target.id:nextId("RUN",runs), date:form.date, name:form.name, ref:form.ref||"", items:items.map(i=>({materialId:i.materialId,qty:parseInt(i.qty)})), userId:session.user.id, status:form.status||"Planned", notes:form.notes||"" };
     const newRuns=isEdit?runs.map(r=>r.id===target.id?run:r):[...runs,run];
     const entry=addAuditEntry(isEdit?"RUN_EDIT":"RUN_CREATE","Run",run.id,isEdit?`Edited Run: ${run.name}`:`Created: ${run.name}`);
     const newA=[entry,...audit].slice(0,500);
@@ -715,7 +722,7 @@ const save = useCallback(async (key, val) => {
     if (type==="editThreshold") setForm({threshold:tgt.threshold});
     if (type==="addSup")   setForm({id:nextId("SUP",sups),name:"",contact:"",email:"",phone:"",lead:"",materials:"",status:"Active"});
     if (type==="editSup")  setForm({...tgt});
-    if (type==="addPO")    setForm({id:`PO-${uid()}`,supplierId:"",materialId:"",qty:"",unitCost:"",expectedDate:"",notes:"",status:"Pending"});
+    if (type==="addPO")    setForm({id:nextId("PO",pos),supplierId:"",materialId:"",qty:"",unitCost:"",expectedDate:"",notes:"",status:"Pending"});
     if (type==="editPO")   setForm({...tgt});
     if (type==="addRun")   setForm({name:"",date:today(),ref:"",notes:"",status:"Planned",items:[{materialId:"",qty:""}]});
     if (type==="editRun")  setForm({...tgt,items:[...tgt.items.map(i=>({...i}))]});
@@ -770,6 +777,7 @@ const save = useCallback(async (key, val) => {
     {key:"Cost & Analytics",label:"Cost & Analytics",perm:"costs"},
     {key:"Forecasting",label:"🔮 Forecasting",perm:"costs"},
     {key:"Audit Log",label:"Audit Log",perm:"auditLog"},
+    {key:"Users",label:"Users",perm:"admin"},
     {key:"Admin",label:"Admin",perm:"admin"},
   ];
   const visibleTabs = TAB_MAP.filter(t=>see(t.perm));
@@ -1179,7 +1187,7 @@ const save = useCallback(async (key, val) => {
                   <Th c="Actions"/>
                 </tr></thead>
                 <tbody>
-                  {filteredMats.map((m,i)=>{const s=stockStatus(m.stock,m.threshold); return(
+                  {filteredMats.slice((invPage-1)*PAGE,invPage*PAGE).map((m,i)=>{const s=stockStatus(m.stock,m.threshold); return(
                     <tr key={m.id} style={{background:i%2===0?"var(--panel-2)":"var(--panel)"}}>
                       <Td c={m.id} color="#3b82f6" bold style={{fontSize:11}}/>
                       <Td c={m.name} bold/>
@@ -1211,6 +1219,7 @@ const save = useCallback(async (key, val) => {
                 </tbody>
               </table>
               {filteredMats.length===0&&<EmptyState icon="📦" msg="No materials found"/>}
+              <Pager page={invPage} setPage={setInvPage} total={filteredMats.length}/>
             </Card>
           </div>
         )}
@@ -1231,7 +1240,7 @@ const save = useCallback(async (key, val) => {
                   <Th c="Reference"/><Th c="Source"/><Th c="From → To"/><Th c="By"/>
                 </tr></thead>
                 <tbody>
-                  {visibleTxn.map((tx,i)=>{
+                  {visibleTxn.slice((txnPage-1)*PAGE,txnPage*PAGE).map((tx,i)=>{
                     const m=mats.find(x=>x.id===tx.materialId);
                     const u=users.find(x=>x.id===tx.userId);
                     const flow = tx.type==="IN"
@@ -1258,6 +1267,7 @@ const save = useCallback(async (key, val) => {
                 </tbody>
               </table>
               {visibleTxn.length===0&&<EmptyState icon="📋" msg="No transactions yet"/>}
+              <Pager page={txnPage} setPage={setTxnPage} total={visibleTxn.length}/>
             </Card>
           </div>
         )}
@@ -1278,7 +1288,7 @@ const save = useCallback(async (key, val) => {
                   <Th c="Expected"/><Th c="Status"/><Th c="Actions"/>
                 </tr></thead>
                 <tbody>
-                  {pos.filter(p=>poFilter==="All"||p.status===poFilter).map((po,i)=>{
+                  {pos.filter(p=>poFilter==="All"||p.status===poFilter).slice((poPage-1)*PAGE,poPage*PAGE).map((po,i)=>{
                     const mat=mats.find(m=>m.id===po.materialId);
                     const sup=sups.find(s=>s.id===po.supplierId);
                     const c=PO_COLORS[po.status]||"var(--text-muted)";
@@ -1306,6 +1316,7 @@ const save = useCallback(async (key, val) => {
                 </tbody>
               </table>
               {pos.filter(p=>poFilter==="All"||p.status===poFilter).length===0&&<EmptyState icon="🧾" msg="No purchase orders found"/>}
+              <Pager page={poPage} setPage={setPoPage} total={pos.filter(p=>poFilter==="All"||p.status===poFilter).length}/>
             </Card>
           </div>
         )}
@@ -1319,7 +1330,7 @@ const save = useCallback(async (key, val) => {
               {can("createRun")&&<button style={btn("var(--accent)")} onClick={()=>openModal("addRun")}>＋ New Run</button>}
             </SectionBar>
             <div style={{display:"grid",gap:14}}>
-              {runs.filter(r=>runFilter==="All"||r.status===runFilter).map(run=>{
+              {runs.filter(r=>runFilter==="All"||r.status===runFilter).slice((runPage-1)*PAGE,runPage*PAGE).map(run=>{
                 const c=RUN_COLORS[run.status]||"var(--text-muted)";
                 const u=users.find(x=>x.id===run.userId);
                 return(
@@ -1354,6 +1365,7 @@ const save = useCallback(async (key, val) => {
                 );
               })}
               {runs.filter(r=>runFilter==="All"||r.status===runFilter).length===0&&<EmptyState icon="🏭" msg="No production runs found"/>}
+              <Pager page={runPage} setPage={setRunPage} total={runs.filter(r=>runFilter==="All"||r.status===runFilter).length}/>
             </div>
           </div>
         )}
@@ -1620,7 +1632,7 @@ const save = useCallback(async (key, val) => {
                   <Th c="Timestamp"/><Th c="User"/><Th c="Action"/><Th c="Entity"/><Th c="Details"/>
                 </tr></thead>
                 <tbody>
-                  {[...audit].sort((a,b)=>b.ts.localeCompare(a.ts)).map((entry,i)=>(
+                  {[...audit].sort((a,b)=>b.ts.localeCompare(a.ts)).slice((audPage-1)*PAGE,audPage*PAGE).map((entry,i)=>(
                     <tr key={entry.id} style={{background:i%2===0?"var(--panel-2)":"var(--panel)"}}>
                       <Td c={fmtTs(entry.ts)} color="var(--text-muted)" style={{fontSize:11,whiteSpace:"nowrap"}}/>
                       <td style={{padding:"9px 13px"}}>
@@ -1637,17 +1649,20 @@ const save = useCallback(async (key, val) => {
                 </tbody>
               </table>
               {audit.length===0&&<EmptyState icon="🔍" msg="No audit entries yet"/>}
+              <Pager page={audPage} setPage={setAudPage} total={audit.length}/>
             </Card>
           </div>
         )}
 
-        {/* ══ ADMIN ════════════════════════════════════════════════════════ */}
-        {tab==="Admin"&&(
+        {/* ══ USERS ════════════════════════════════════════════════════════ */}
+        {tab==="Users"&&(()=>{
+          const q=userSearch.trim().toLowerCase();
+          const fUsers=profileUsers.filter(u=>(userRoleFilter==="All"||u.role===userRoleFilter)&&(q===""||((u.name||"")+" "+(u.email||"")).toLowerCase().includes(q)));
+          const pageUsers=fUsers.slice((usrPage-1)*PAGE,usrPage*PAGE);
+          return (
           <div>
-            <h2 style={{margin:"0 0 20px",fontSize:20,fontWeight:800,color:"var(--text)"}}>Admin Panel</h2>
-
-            {/* User Management (Supabase profiles) */}
-            <Card style={{marginBottom:20}}>
+            <h2 style={{margin:"0 0 20px",fontSize:20,fontWeight:800,color:"var(--text)"}}>Users</h2>
+            <Card>
               <div style={{padding:"14px 18px",borderBottom:"1px solid var(--border)"}}>
                 <div style={{fontWeight:600,fontSize:14,color:"var(--text)"}}>User management</div>
                 <div style={{fontSize:12,color:"var(--text-muted)",marginTop:3}}>People sign up themselves. Assign a role to grant access — set to "Pending" to revoke it.</div>
@@ -1664,9 +1679,9 @@ const save = useCallback(async (key, val) => {
                   <Th c="Name"/><Th c="Email"/><Th c="Phone"/><Th c="Role"/><Th c="Actions"/>
                 </tr></thead>
                 <tbody>
-                  {(()=>{ const q=userSearch.trim().toLowerCase(); const fu=profileUsers.filter(u=>(userRoleFilter==="All"||u.role===userRoleFilter)&&(q===""||((u.name||"")+" "+(u.email||"")).toLowerCase().includes(q)));
-                    if(fu.length===0) return <tr><td colSpan={5} style={{padding:"16px 18px",color:"var(--text-muted)"}}>{profileUsers.length===0?"No users yet.":"No users match your search."}</td></tr>;
-                    return fu.map(u=>{ const self=u.id===session.user.id; const pending=u.role==="Pending"; return (
+                  {fUsers.length===0
+                    ? <tr><td colSpan={5} style={{padding:"16px 18px",color:"var(--text-muted)"}}>{profileUsers.length===0?"No users yet.":"No users match your search."}</td></tr>
+                    : pageUsers.map(u=>{ const self=u.id===session.user.id; const pending=u.role==="Pending"; return (
                     <tr key={u.id} style={{background:pending?"var(--warning-bg)":"transparent",borderTop:"1px solid var(--border)"}}>
                       <td style={{padding:"11px 14px",fontWeight:600,color:"var(--text)"}}>{u.name||"—"} {self&&<span style={{fontSize:10,color:"var(--text-muted)",fontWeight:400}}>(you)</span>}</td>
                       <td style={{padding:"11px 14px",color:"var(--text-secondary)"}}>{u.email||"—"}</td>
@@ -1678,12 +1693,19 @@ const save = useCallback(async (key, val) => {
                       </td>
                       <td style={{padding:"11px 14px"}}>{!self&&<button onClick={()=>removeProfile(u.id)} style={{...btn("var(--danger-bg)","var(--danger)","5px 12px"),fontSize:11}}>Remove</button>}</td>
                     </tr>
-                  );}); })()}
+                  );})}
                 </tbody>
               </table>
               </div>
+              <Pager page={usrPage} setPage={setUsrPage} total={fUsers.length}/>
             </Card>
+          </div>
+          );})()}
 
+        {/* ══ ADMIN ════════════════════════════════════════════════════════ */}
+        {tab==="Admin"&&(
+          <div>
+            <h2 style={{margin:"0 0 20px",fontSize:20,fontWeight:800,color:"var(--text)"}}>Admin Panel</h2>
             {/* Permissions */}
             <div style={{fontWeight:800,fontSize:14,color:"var(--text)",marginBottom:12}}>Role Permissions</div>
             <div style={{display:"grid",gap:14,marginBottom:20}}>
@@ -1842,7 +1864,7 @@ const save = useCallback(async (key, val) => {
             {(modal==="addPO"||modal==="editPO")&&<>
               <div style={{fontWeight:800,fontSize:17,marginBottom:18,color:"var(--text)"}}>{modal==="addPO"?"Create Purchase Order":"Edit PO"}</div>
               <div style={{display:"grid",gap:11}}>
-                <div><Lbl c="PO ID *"/><input value={form.id||""} onChange={e=>fset("id",e.target.value)} style={inp}/></div>
+                <div><Lbl c="PO ID"/><input value={form.id||""} readOnly title="Auto-generated" style={{...inp,opacity:0.7,cursor:"not-allowed"}}/></div>
                 <div><Lbl c="Supplier *"/>
                   <select value={form.supplierId||""} onChange={e=>fset("supplierId",e.target.value)} style={inp}>
                     <option value="">Select supplier…</option>

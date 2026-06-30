@@ -29,3 +29,16 @@ export function EmptyState({icon,msg}) {
     <div style={{fontSize:13}}>{msg}</div>
   </div>;
 }
+
+export function Pager({ page, setPage, total, pageSize = 50 }) {
+  const pages = Math.max(1, Math.ceil(total / pageSize));
+  if (total <= pageSize) return null;
+  const b = { background:"var(--panel-2)", border:"1px solid var(--border)", borderRadius:7, padding:"5px 12px", fontSize:12, color:"var(--text)", fontFamily:"inherit" };
+  return (
+    <div style={{ display:"flex", alignItems:"center", justifyContent:"flex-end", gap:12, padding:"10px 16px" }}>
+      <button onClick={()=>setPage(p=>Math.max(1,p-1))} disabled={page<=1} style={{...b, opacity:page<=1?0.4:1, cursor:page<=1?"default":"pointer"}}>‹ Prev</button>
+      <span style={{ fontSize:12, color:"var(--text-secondary)" }}>Page {page} of {pages} · {total} total</span>
+      <button onClick={()=>setPage(p=>Math.min(pages,p+1))} disabled={page>=pages} style={{...b, opacity:page>=pages?0.4:1, cursor:page>=pages?"default":"pointer"}}>Next ›</button>
+    </div>
+  );
+}
