@@ -57,7 +57,7 @@ export default function App() {
   const [userSearch, setUserSearch] = useState("");
   const [userRoleFilter, setUserRoleFilter] = useState("All");
   const [settings, setSettings] = useState({companyName:"InventoryOS",currency:"₹",logoUrl:""});
-  useEffect(()=>{ document.title = settings.companyName || "Duvidesigns"; },[settings.companyName]);
+  useEffect(()=>{ document.title = "DuviDesigns"; },[]);
   useEffect(()=>{
     try { localStorage.setItem("io-theme", theme); } catch(e){}
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
@@ -247,14 +247,14 @@ const save = useCallback(async (key, val) => {
     const firstName=(loginF.firstName||"").trim(), lastName=(loginF.lastName||"").trim();
     const email=(loginF.username||"").trim(), phone=(loginF.phone||"").trim();
     const name=`${firstName} ${lastName}`.trim();
-    if (!firstName) { setLoginF(f=>({...f,error:"First name is required."})); return; }
-    if (!lastName)  { setLoginF(f=>({...f,error:"Last name is required."})); return; }
-    if (!email)     { setLoginF(f=>({...f,error:"Email is required."})); return; }
-    if (!phone)     { setLoginF(f=>({...f,error:"Phone number is required."})); return; }
-    if (!loginF.dob){ setLoginF(f=>({...f,error:"Date of birth is required."})); return; }
-    if (!loginF.password)         { setLoginF(f=>({...f,error:"Password is required."})); return; }
-    if (loginF.password.length<6) { setLoginF(f=>({...f,error:"Password must be at least 6 characters."})); return; }
-    setLoginF(f=>({...f,error:"",info:"",loading:true}));
+    if (!firstName) { setLoginF(f=>({...f,error:"First name is required.",errField:"firstName"})); return; }
+    if (!lastName)  { setLoginF(f=>({...f,error:"Last name is required.",errField:"lastName"})); return; }
+    if (!email)     { setLoginF(f=>({...f,error:"Email is required.",errField:"email"})); return; }
+    if (!phone)     { setLoginF(f=>({...f,error:"Phone number is required.",errField:"phone"})); return; }
+    if (!loginF.dob){ setLoginF(f=>({...f,error:"Date of birth is required.",errField:"dob"})); return; }
+    if (!loginF.password)         { setLoginF(f=>({...f,error:"Password is required.",errField:"password"})); return; }
+    if (loginF.password.length<6) { setLoginF(f=>({...f,error:"Password must be at least 6 characters.",errField:"password"})); return; }
+    setLoginF(f=>({...f,error:"",info:"",errField:"",loading:true}));
     const { data, error } = await supabase.auth.signUp({ email, password: loginF.password });
     if (error) {
       const dup=/already|registered|exists/i.test(error.message);
@@ -379,7 +379,15 @@ const save = useCallback(async (key, val) => {
       password: loginF.password,
     });
     if (authErr || !authData?.user) {
-      setLoginF(f=>({...f,error:"Incorrect email or password.",loading:false})); return;
+      const m=authErr?.message||"";
+      let friendly;
+      if (/not confirmed/i.test(m)) friendly="Your email isn't confirmed yet — ask an admin.";
+      else {
+        let exists=true;
+        try { const { data:ex } = await supabase.rpc("email_exists",{p_email:(loginF.username||"").trim()}); if(ex===false) exists=false; } catch(_){}
+        friendly = exists ? "Incorrect password." : "No account found with this email.";
+      }
+      setLoginF(f=>({...f,error:friendly,loading:false})); return;
     }
     // 2) Fetch this user's profile (name + role)
     const { data:profile, error:profErr } = await supabase
@@ -772,6 +780,8 @@ const save = useCallback(async (key, val) => {
     const selS={width:"100%",height:42,background:C.inb,border:"1px solid "+C.bd,borderRadius:9,padding:"0 12px",color:C.tx,fontSize:14,margin:"6px 0 15px",fontFamily:"inherit"};
     const inS={flex:1,background:"transparent",border:"none",outline:"none",color:C.tx,fontSize:14};
     const lblS={color:"#cfcfc9",fontSize:12,fontWeight:500};
+    const reqStar=<span style={{color:"#ef4444"}}> *</span>;
+    const eb=(n)=>loginF.errField===n?{borderColor:"#ef4444"}:{};
     const orBtn={background:C.or,color:"#1a1208",border:"none",borderRadius:9,padding:"12px",fontWeight:600,fontSize:14.5,cursor:"pointer",width:"100%"};
     const ghBtn={background:"transparent",border:"1px solid rgba(242,145,27,0.4)",color:C.or,borderRadius:9,padding:"11px",fontWeight:600,fontSize:14,cursor:"pointer",width:"100%"};
     const lk={color:C.or,fontSize:12.5,fontWeight:600,cursor:"pointer",background:"none",border:"none",padding:0};
@@ -818,20 +828,20 @@ const save = useCallback(async (key, val) => {
             <div style={{color:C.tx,fontSize:22,fontWeight:600}}>Create your account</div>
             <div style={{color:C.mut,fontSize:13,marginTop:5,marginBottom:24}}>Request access to Duvi Designs</div>
             {msg}
-            <label style={lblS}>First name</label>
-            <div style={wrapS}><input type="text" placeholder="First name" value={loginF.firstName||""} onChange={e=>setF("firstName",e.target.value)} style={inS} autoFocus/></div>
-            <label style={lblS}>Last name</label>
-            <div style={wrapS}><input type="text" placeholder="Last name" value={loginF.lastName||""} onChange={e=>setF("lastName",e.target.value)} style={inS}/></div>
-            <label style={lblS}>Email</label>
-            <div style={wrapS}><Mail size={17} color={C.mut}/><input type="email" placeholder="you@company.com" value={loginF.username} onChange={e=>setF("username",e.target.value)} style={inS}/></div>
-            <label style={lblS}>Phone</label>
-            <div style={wrapS}><Phone size={17} color={C.mut}/><input type="tel" placeholder="Phone number" value={loginF.phone} onChange={e=>setF("phone",e.target.value)} style={inS}/></div>
+            <label style={lblS}>First name{reqStar}</label>
+            <div style={{...wrapS,...eb("firstName")}}><input type="text" placeholder="First name" value={loginF.firstName||""} onChange={e=>setF("firstName",e.target.value)} style={inS} autoFocus/></div>
+            <label style={lblS}>Last name{reqStar}</label>
+            <div style={{...wrapS,...eb("lastName")}}><input type="text" placeholder="Last name" value={loginF.lastName||""} onChange={e=>setF("lastName",e.target.value)} style={inS}/></div>
+            <label style={lblS}>Email{reqStar}</label>
+            <div style={{...wrapS,...eb("email")}}><Mail size={17} color={C.mut}/><input type="email" placeholder="you@company.com" value={loginF.username} onChange={e=>setF("username",e.target.value)} style={inS}/></div>
+            <label style={lblS}>Phone{reqStar}</label>
+            <div style={{...wrapS,...eb("phone")}}><Phone size={17} color={C.mut}/><input type="tel" placeholder="Phone number" value={loginF.phone} onChange={e=>setF("phone",e.target.value)} style={inS}/></div>
             <label style={lblS}>Gender</label>
             <select value={loginF.gender} onChange={e=>setF("gender",e.target.value)} style={selS}><option value="">Prefer not to say</option><option value="Male">Male</option><option value="Female">Female</option><option value="Other">Other</option></select>
-            <label style={lblS}>Date of birth</label>
-            <input type="date" value={loginF.dob} onChange={e=>setF("dob",e.target.value)} style={selS}/>
-            <label style={lblS}>Password</label>
-            <div style={{...wrapS,margin:"6px 0 16px"}}><Lock size={17} color={C.mut}/><input type={showPw?"text":"password"} placeholder="At least 6 characters" value={loginF.password} onChange={e=>setF("password",e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleSignup()} style={inS}/><button onClick={()=>setShowPw(s=>!s)} style={eyeBtn}>{showPw?<EyeOff size={17}/>:<Eye size={17}/>}</button></div>
+            <label style={lblS}>Date of birth{reqStar}</label>
+            <input type="date" value={loginF.dob} onChange={e=>setF("dob",e.target.value)} style={{...selS,...eb("dob")}}/>
+            <label style={lblS}>Password{reqStar}</label>
+            <div style={{...wrapS,margin:"6px 0 16px",...eb("password")}}><Lock size={17} color={C.mut}/><input type={showPw?"text":"password"} placeholder="At least 6 characters" value={loginF.password} onChange={e=>setF("password",e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleSignup()} style={inS}/><button onClick={()=>setShowPw(s=>!s)} style={eyeBtn}>{showPw?<EyeOff size={17}/>:<Eye size={17}/>}</button></div>
             <button style={orBtn} onClick={handleSignup}>{loginF.loading?"Creating…":"Create account"}</button>
             <div style={{textAlign:"center",marginTop:18}}><span style={{color:C.mut,fontSize:12.5}}>Already have an account? </span><button style={lk} onClick={()=>{setLoginF(f=>({...f,error:"",info:""}));setAuthView("signin");}}>Sign in</button></div>
           </>)}
@@ -970,10 +980,8 @@ const save = useCallback(async (key, val) => {
       {/* Sidebar */}
       <aside style={{width:230,flexShrink:0,background:"var(--sidebar-bg)",borderRight:"1px solid var(--sidebar-border)",height:"100vh",position:"sticky",top:0,display:"flex",flexDirection:"column",padding:"16px 12px",zIndex:100}}>
         <div style={{display:"flex",alignItems:"center",gap:10,padding:"4px 8px 18px"}}>
-          {settings.logoUrl
-            ? <img src={settings.logoUrl} alt="logo" style={{width:30,height:30,borderRadius:8,objectFit:"cover",flexShrink:0}}/>
-            : <div style={{width:30,height:30,borderRadius:8,background:"var(--accent)",color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><Boxes size={18}/></div>}
-          <span style={{fontSize:15,fontWeight:600,color:"var(--sidebar-text)",letterSpacing:"-0.3px"}}>{settings.companyName||"InventoryOS"}</span>
+          <div style={{width:30,height:30,borderRadius:8,background:"#f2911b",color:"#1a1a1c",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><Settings size={18}/></div>
+          <span style={{fontSize:15,fontWeight:600,color:"var(--sidebar-text)",letterSpacing:"-0.3px"}}>Duvi Designs</span>
         </div>
         <nav style={{display:"flex",flexDirection:"column",gap:2,overflowY:"auto",flex:1}}>
           {visibleTabs.map(t=>{ const Icon=TAB_ICONS[t.key]||LayoutDashboard; const active=tab===t.key; return (
@@ -1627,17 +1635,6 @@ const save = useCallback(async (key, val) => {
         {tab==="Admin"&&(
           <div>
             <h2 style={{margin:"0 0 20px",fontSize:20,fontWeight:800,color:"var(--text)"}}>Admin Panel</h2>
-            <Card style={{marginBottom:20}}>
-              <div style={{padding:"14px 18px",borderBottom:"1px solid var(--border)"}}>
-                <div style={{fontWeight:600,fontSize:14,color:"var(--text)"}}>Company settings</div>
-                <div style={{fontSize:12,color:"var(--text-muted)",marginTop:3}}>Branding and currency used across the whole app.</div>
-              </div>
-              <div style={{padding:"16px 18px",display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
-                <div style={{gridColumn:"1 / -1"}}><Lbl c="Company name"/><input value={settings.companyName} onChange={e=>setSettings(s=>({...s,companyName:e.target.value}))} style={inp}/></div>
-                <div style={{gridColumn:"1 / -1"}}><Lbl c="Logo URL (optional)"/><input value={settings.logoUrl} onChange={e=>setSettings(s=>({...s,logoUrl:e.target.value}))} placeholder="https://…/logo.png" style={inp}/></div>
-              </div>
-              <div style={{padding:"0 18px 16px"}}><button style={btn("var(--accent)")} onClick={()=>saveSettings(settings)}>Save settings</button></div>
-            </Card>
 
             {/* User Management (Supabase profiles) */}
             <Card style={{marginBottom:20}}>
